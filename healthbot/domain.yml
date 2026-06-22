@@ -1,0 +1,143 @@
+version: "3.1"
+
+intents:
+  - greet
+  - goodbye
+  - ask_symptoms
+  - disease_info
+  - affirm
+  - deny
+  - vaccination_query
+  - outbreak_query
+  - disease_prevention
+  - bot_challenge
+  - nlu_fallback
+  - general_health_advice
+  - inform
+
+entities:
+  - disease
+  - symptom
+
+slots:
+  disease:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: from_entity
+        entity: disease
+
+  # List of diseases still in the running
+  candidate_diseases:
+    type: list
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  # All symptoms already mentioned or asked (never re-asked)
+  asked_symptoms:
+    type: list
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  # Symptom currently waiting for yes/no confirmation
+  pending_symptom:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  # Symptoms the user has positively confirmed
+  confirmed_symptoms:
+    type: list
+    influence_conversation: false
+    mappings:
+      - type: custom
+  # To avoid overwriting predicted disease with queried disease
+  disease_entity:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: from_entity
+        entity: disease
+
+  age:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: from_text
+        intent: vaccination_query
+
+  # Tracks number of follow-up questions asked
+  question_count:
+    type: any
+    initial_value: 0
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  user_age:
+    type: any
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  duration_days:
+    type: any
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  severity:
+    type: any
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  triage_state:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+responses:
+
+  utter_greet:
+    - text: "Hello! I can help assess your symptoms. Please tell me what you are experiencing."
+
+  utter_goodbye:
+    - text: "Take care! Don't hesitate to return if you have more health questions."
+
+  utter_vaccination_query:
+    - text: "Vaccination schedules depend on age and health status. Please provide your age or category."
+
+  utter_outbreak_query:
+    - text: "I don't have access to real-time outbreak data. Please visit your local health authority website for current outbreak alerts."
+
+  utter_bot_challenge:
+    - text: "I am an AI-powered public health assistant chatbot."
+
+  utter_ask_symptoms_fallback:
+    - text: "Could you describe your symptoms in more detail so I can help you better?"
+
+  utter_fallback:
+    - text: "I'm sorry, I didn't understand that. You can describe your symptoms, ask about a disease, or ask about prevention tips."
+
+  utter_general_health_advice:
+    - text: "For general health concerns, please consult a doctor or pharmacist. I can help you check your symptoms, learn about a specific disease, or find prevention tips. Which would you like?"
+
+
+actions:
+  - action_disease_description
+  - action_disease_precaution
+  - action_vaccination_schedule
+  - action_dynamic_followup_question
+  - action_handle_affirm
+  - action_handle_deny
+  - action_handle_inform
+
+
+session_config:
+  session_expiration_time: 60
+  carry_over_slots_to_new_session: true

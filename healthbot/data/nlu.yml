@@ -1,0 +1,291 @@
+version: "3.1"
+
+nlu:
+
+- lookup: disease
+  examples: |
+    - dengue
+    - malaria
+    - typhoid
+    - cholera
+    - tuberculosis
+    - hepatitis a
+    - hepatitis b
+    - pneumonia
+    - diabetes
+    - hypertension
+    - drug reaction
+    - allergy
+    - hypothyroidism
+    - psoriasis
+    - gerd
+    - chronic cholestasis
+    - osteoarthristis
+    - (vertigo) paroymsal  positional vertigo
+    - hypoglycemia
+    - acne
+    - impetigo
+    - peptic ulcer diseae
+    - dimorphic hemorrhoids(piles)
+    - common cold
+    - chicken pox
+    - cervical spondylosis
+    - hyperthyroidism
+    - urinary tract infection
+    - varicose veins
+    - aids
+    - paralysis (brain hemorrhage)
+    - fungal infection
+    - hepatitis c
+    - migraine
+    - bronchial asthma
+    - alcoholic hepatitis
+    - jaundice
+    - hepatitis e
+    - hepatitis d
+    - heart attack
+    - arthritis
+    - gastroenteritis
+
+- intent: greet
+  examples: |
+    - hello
+    - hi
+    - hey
+    - vanakkam
+    - namaste
+    - good morning
+    - good evening
+    - hi there
+    - howdy
+
+- intent: goodbye
+  examples: |
+    - bye
+    - goodbye
+    - see you later
+    - take care
+    - thank you goodbye
+    - ok bye
+
+- intent: disease_info
+  examples: |
+    - What are [dengue](disease) symptoms?
+    - Symptoms of [malaria](disease)?
+    - Signs of [typhoid](disease)?
+    - Tell me symptoms of [cholera](disease)
+    - Explain [tuberculosis](disease)
+    - What is [diabetes](disease)?
+    - Tell me about [hypertension](disease)
+    - How do I know if I have [dengue](disease)?
+    - How to identify [malaria](disease)?
+    - How can I tell if I have [typhoid](disease)?
+    - Is this [diabetes](disease)?
+    - Could this be [malaria](disease)?
+    - What does [dengue](disease) feel like?
+    - How do I check for [tuberculosis](disease)?
+    - Signs that I might have [dengue](disease)
+    - How to detect [hepatitis a](disease)?
+    - What happens when you get [cholera](disease)?
+    - How to recognize [pneumonia](disease)?
+    - Am I showing signs of [diabetes](disease)?
+
+- intent: ask_symptoms
+  examples: |
+    - I have [fever](symptom) and [headache](symptom)
+    - I feel [body pain](symptom) and [fever](symptom)
+    - I have [rash](symptom) and [joint pain](symptom)
+    - I have [itching](symptom) and [skin rash](symptom)
+    - I have [chest pain](symptom) and [shortness of breath](symptom)
+    - My symptoms are [vomiting](symptom) and [nausea](symptom)
+    - I have [stomach pain](symptom) and [diarrhea](symptom)
+    - I feel [dizzy](symptom) and have [blurred vision](symptom)
+    - I have [yellowing of skin](symptom) and eyes
+    - I feel very [weak](symptom) and have no appetite
+    - I have continuous sneezing and chills
+    - I feel tired and have a cough
+    - I have a high temperature and muscle aches
+    - I have swollen lymph nodes
+    - I have skin rash and nodal skin eruptions
+    - I am experiencing itching and dischromic patches
+    - I have watering from eyes and sneezing
+    - I have shivering and chills
+    - My joints hurt and I have a rash
+    - I feel breathless and have fatigue
+    - I am feeling tired all the time
+    - I feel very weak lately
+    - I have been having headaches for days
+    - I have a persistent cough
+    - I feel feverish
+    - I have been vomiting since yesterday
+    - My stomach hurts
+    - I feel nauseous
+    - I have back pain
+    - I am feeling dizzy
+    - I have a sore throat
+    - I feel breathless when walking
+    - I have been sweating a lot at night
+    - Is it normal to feel this tired?
+    - I have no energy at all
+    - I keep getting headaches
+    - I have joint pain since 3 days
+    - My skin has been itching
+    - I don't feel well
+    - I am not feeling well
+    - I feel unwell
+    - something is wrong with me
+    - I feel sick
+    - I am feeling sick
+    - I don't feel good
+    - I feel terrible
+    - I feel awful
+    - I feel really bad
+    - I am feeling bad
+    - my health is not good
+    - I think I am falling sick
+    - I feel under the weather
+    - I am not okay
+    - something feels off
+    - I have been feeling off lately
+    - I feel strange
+    - I don't feel like myself
+    - I feel exhausted and sick
+    - I feel really weak
+    - I haven't been feeling well
+    - I think I have a bug
+    - I might be coming down with something
+
+- intent: affirm
+  examples: |
+    - yes
+    - yeah
+    - yep
+    - yup
+    - correct
+    - that's right
+    - absolutely
+    - indeed
+    - sure
+    - yes I do
+    - yes I have that
+    - I have that too
+    - I also have that
+    - yes that's correct
+    - definitely
+    - of course
+    - right
+    - affirmative
+    - yes exactly
+    - I do have it
+    - that is correct
+
+- intent: deny
+  examples: |
+    - no
+    - nope
+    - nah
+    - not really
+    - I don't have that
+    - I don't think so
+    - no I don't
+    - that's not right
+    - no that's wrong
+    - I haven't had that
+    - negative
+    - definitely not
+    - I do not have that
+    - no I don't have it
+    - not at all
+    - no way
+    - no I haven't
+    - I don't feel that
+
+- intent: disease_prevention
+  examples: |
+    - How to prevent [dengue](disease)?
+    - How to avoid getting [malaria](disease)?
+    - Prevention tips for [typhoid](disease)
+    - How can I avoid [dengue](disease)?
+    - How do I stop [malaria](disease) infection?
+    - What are the prevention tips for [cholera](disease)?
+    - How to avoid getting sick?
+    - Prevention for [tuberculosis](disease)
+    - How can I stop [cholera](disease) from spreading?
+    - Precautions for [tuberculosis](disease)
+    - How to protect myself from [dengue](disease)?
+    - Ways to prevent [malaria](disease) infection
+    - How do I avoid [hepatitis a](disease)?
+    - Safety measures for [dengue](disease)
+    - How to not get [typhoid](disease)?
+
+- intent: general_health_advice
+  examples: |
+    - What should I do for cold and cough at home?
+    - Home remedies for fever?
+    - How to treat a headache at home?
+    - Is chest pain an emergency?
+    - What to do when someone has a heart attack?
+    - How to reduce fever naturally?
+    - When should I see a doctor for cough?
+    - Is it serious to have chest pain?
+    - What helps with nausea at home?
+    - How to manage diabetes at home?
+    - What foods to avoid during fever?
+    - How to bring down high temperature?
+    - Should I go to the hospital for chest pain?
+    - What is the first aid for a fever?
+    - How do I treat a cold at home?
+    - Can I treat dengue at home?
+    - Is high fever dangerous?
+    - How long does typhoid last?
+
+- intent: vaccination_query
+  examples: |
+    - Which vaccine for newborn baby?
+    - My baby is 6 months old what vaccine is needed?
+    - Vaccines for children under 1 year
+    - Pregnancy vaccine needed?
+    - TT vaccine required during pregnancy?
+    - What vaccinations do I need?
+    - Which shots are required for school?
+
+- intent: outbreak_query
+  examples: |
+    - Is dengue spreading near me?
+    - Any malaria cases in my district?
+    - Covid cases nearby?
+    - Is there an outbreak in my area?
+    - Are there any disease outbreaks?
+
+- intent: bot_challenge
+  examples: |
+    - are you a bot?
+    - who are you?
+    - are you human?
+    - am I talking to a machine?
+    - are you an AI?
+    - what are you?
+
+- intent: inform
+  examples: |
+    - 25
+    - 30
+    - I am 40 years old
+    - 5 days
+    - 3
+    - for 2 days
+    - level 8
+    - 9
+    - 10
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 12
+    - 55
+    - 65
+    - yes, very helpful
+    - no, not helpful

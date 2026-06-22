@@ -1,0 +1,9 @@
+venv/
+pyvenv.cfg
+__pycache__/
+*.pyc
+.env
+healthbot/venv/
+healthbot/.rasa/
+healthbot/models/
+healthbot/scratch/

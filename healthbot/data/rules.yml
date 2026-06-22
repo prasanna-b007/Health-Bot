@@ -1,0 +1,81 @@
+version: "3.1"
+
+rules:
+
+  # ── Greetings ────────────────────────────────────────────────────────────
+  - rule: greet user
+    steps:
+      - intent: greet
+      - action: utter_greet
+
+  # ── Goodbye ──────────────────────────────────────────────────────────────
+  - rule: goodbye user
+    steps:
+      - intent: goodbye
+      - action: utter_goodbye
+
+  # ── Disease Information ──────────────────────────────────────────────────
+  - rule: disease information
+    steps:
+      - intent: disease_info
+      - action: action_disease_description
+
+  # ── Initial symptom description → start triage ───────────────────────────
+  - rule: symptom triage start
+    steps:
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+
+  # ── Yes response during triage ───────────────────────────────────────────
+  - rule: handle affirm during triage
+    steps:
+      - intent: affirm
+      - action: action_handle_affirm
+
+  # ── No response during triage ────────────────────────────────────────────
+  - rule: handle deny during triage
+    steps:
+      - intent: deny
+      - action: action_handle_deny
+
+  # ── Inform response during triage ────────────────────────────────────────
+  - rule: handle inform during triage
+    steps:
+      - intent: inform
+      - action: action_handle_inform
+
+  # ── Vaccination help ─────────────────────────────────────────────────────
+  - rule: vaccination help
+    steps:
+      - intent: vaccination_query
+      - action: action_vaccination_schedule
+
+  # ── Outbreak alert ───────────────────────────────────────────────────────
+  - rule: outbreak alert
+    steps:
+      - intent: outbreak_query
+      - action: utter_outbreak_query
+
+  # ── Prevention / precaution advice ───────────────────────────────────────
+  - rule: prevention advice
+    steps:
+      - intent: disease_prevention
+      - action: action_disease_precaution
+
+  # ── Bot identity ─────────────────────────────────────────────────────────
+  - rule: bot identity response
+    steps:
+      - intent: bot_challenge
+      - action: utter_bot_challenge
+
+  # ── Fallback ─────────────────────────────────────────────────────────────
+  - rule: fallback response
+    steps:
+      - intent: nlu_fallback
+      - action: utter_fallback
+
+  # ── General health advice ────────────────────────────────────────────────
+  - rule: general health advice
+    steps:
+      - intent: general_health_advice
+      - action: utter_general_health_advice

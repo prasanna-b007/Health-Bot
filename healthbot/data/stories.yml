@@ -1,0 +1,148 @@
+version: "3.1"
+
+stories:
+
+  # ── Basic flows ───────────────────────────────────────────────────────────
+
+  - story: greet flow
+    steps:
+      - intent: greet
+      - action: utter_greet
+
+  - story: goodbye flow
+    steps:
+      - intent: goodbye
+      - action: utter_goodbye
+
+  - story: vaccination flow
+    steps:
+      - intent: vaccination_query
+      - action: action_vaccination_schedule
+
+  - story: outbreak flow
+    steps:
+      - intent: outbreak_query
+      - action: utter_outbreak_query
+
+  - story: prevention flow
+    steps:
+      - intent: disease_prevention
+      - action: action_disease_precaution
+
+  - story: bot challenge flow
+    steps:
+      - intent: bot_challenge
+      - action: utter_bot_challenge
+
+  # ── Triage flows ─────────────────────────────────────────────────────────
+
+  - story: symptom triage - user confirms all follow-ups
+    steps:
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: affirm
+      - action: action_handle_affirm
+      - intent: affirm
+      - action: action_handle_affirm
+
+  - story: symptom triage - user denies follow-up
+    steps:
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: deny
+      - action: action_handle_deny
+      - intent: affirm
+      - action: action_handle_affirm
+
+  - story: symptom triage - user denies then denies
+    steps:
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: deny
+      - action: action_handle_deny
+      - intent: deny
+      - action: action_handle_deny
+
+  - story: symptom triage - mixed yes no responses
+    steps:
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: affirm
+      - action: action_handle_affirm
+      - intent: deny
+      - action: action_handle_deny
+      - intent: affirm
+      - action: action_handle_affirm
+
+  # ── Greet then triage ─────────────────────────────────────────────────────
+
+  - story: greet then triage
+    steps:
+      - intent: greet
+      - action: utter_greet
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: affirm
+      - action: action_handle_affirm
+
+  # ── Multi-intent Transitions ──────────────────────────────────────────────
+
+  - story: greet then disease info then triage
+    steps:
+      - intent: greet
+      - action: utter_greet
+      - intent: disease_info
+      - action: action_disease_description
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: affirm
+      - action: action_handle_affirm
+
+  - story: prevention then triage
+    steps:
+      - intent: disease_prevention
+      - action: action_disease_precaution
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: deny
+      - action: action_handle_deny
+
+  - story: fallback then triage
+    steps:
+      - intent: nlu_fallback
+      - action: utter_fallback
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: affirm
+      - action: action_handle_affirm
+
+  - story: general advice then triage
+    steps:
+      - intent: general_health_advice
+      - action: utter_general_health_advice
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: deny
+      - action: action_handle_deny
+
+  - story: disease info then prevention
+    steps:
+      - intent: disease_info
+      - action: action_disease_description
+      - intent: disease_prevention
+      - action: action_disease_precaution
+
+  - story: long triage flow
+    steps:
+      - intent: ask_symptoms
+      - action: action_dynamic_followup_question
+      - intent: affirm
+      - action: action_handle_affirm
+      - intent: deny
+      - action: action_handle_deny
+      - intent: affirm
+      - action: action_handle_affirm
+      - intent: deny
+      - action: action_handle_deny
+      - intent: affirm
+      - action: action_handle_affirm
