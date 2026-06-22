@@ -101,6 +101,12 @@ slots:
     mappings:
       - type: custom
 
+  emergency_detected:
+    type: bool
+    influence_conversation: true
+    mappings:
+      - type: custom
+
 responses:
 
   utter_greet:
@@ -136,6 +142,7 @@ actions:
   - action_handle_affirm
   - action_handle_deny
   - action_handle_inform
+  - action_trigger_emergency
 
 
 session_config:

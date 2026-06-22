@@ -79,3 +79,11 @@ rules:
     steps:
       - intent: general_health_advice
       - action: utter_general_health_advice
+
+  # ── Emergency Override ───────────────────────────────────────────────────
+  - rule: emergency override
+    condition:
+      - slot_was_set:
+        - emergency_detected: true
+    steps:
+      - action: action_trigger_emergency

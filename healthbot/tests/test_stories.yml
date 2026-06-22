@@ -1,91 +1,109 @@
-#### This file contains tests to evaluate that your bot behaves as expected.
-#### If you want to learn more, please see the docs: https://rasa.com/docs/rasa/testing-your-assistant
-
+version: "3.1"
 stories:
-- story: happy path 1
+- story: high confidence case
   steps:
   - user: |
-      hello there!
-    intent: greet
-  - action: utter_greet
+      I have a fever, cough, and chest pain
+    intent: ask_symptoms
+  - action: action_dynamic_followup_question
+  - slot_was_set:
+    - triage_state: asking_age
   - user: |
-      amazing
-    intent: mood_great
-  - action: utter_happy
+      30
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - triage_state: asking_duration
+  - user: |
+      4
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - triage_state: asking_severity
+  - user: |
+      5
+    intent: inform
+  - action: action_handle_inform
 
-- story: happy path 2
+- story: low confidence case
   steps:
   - user: |
-      hello there!
-    intent: greet
-  - action: utter_greet
+      I have a mild headache
+    intent: ask_symptoms
+  - action: action_dynamic_followup_question
+  - slot_was_set:
+    - triage_state: asking_age
   - user: |
-      amazing
-    intent: mood_great
-  - action: utter_happy
+      25
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - triage_state: asking_duration
   - user: |
-      bye-bye!
-    intent: goodbye
-  - action: utter_goodbye
+      2
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - triage_state: asking_severity
+  - user: |
+      2
+    intent: inform
+  - action: action_handle_inform
 
-- story: sad path 1
+- story: emergency case
   steps:
   - user: |
-      hello
-    intent: greet
-  - action: utter_greet
-  - user: |
-      not good
-    intent: mood_unhappy
-  - action: utter_cheer_up
-  - action: utter_did_that_help
-  - user: |
-      yes
-    intent: affirm
-  - action: utter_happy
+      I have severe chest pain and I cannot breathe
+    intent: ask_symptoms
+  - action: action_dynamic_followup_question
+  - slot_was_set:
+    - emergency_detected: true
 
-- story: sad path 2
+- story: emergency mid-flow
   steps:
   - user: |
-      hello
-    intent: greet
-  - action: utter_greet
+      I have a mild fever
+    intent: ask_symptoms
+  - action: action_dynamic_followup_question
+  - slot_was_set:
+    - triage_state: asking_age
   - user: |
-      not good
-    intent: mood_unhappy
-  - action: utter_cheer_up
-  - action: utter_did_that_help
-  - user: |
-      not really
-    intent: deny
-  - action: utter_goodbye
+      I am having a heart attack
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - emergency_detected: true
 
-- story: sad path 3
+- story: age risk case
   steps:
   - user: |
-      hi
-    intent: greet
-  - action: utter_greet
+      I have fatigue
+    intent: ask_symptoms
+  - action: action_dynamic_followup_question
+  - slot_was_set:
+    - triage_state: asking_age
   - user: |
-      very terrible
-    intent: mood_unhappy
-  - action: utter_cheer_up
-  - action: utter_did_that_help
-  - user: |
-      no
-    intent: deny
-  - action: utter_goodbye
+      75
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - triage_state: asking_duration
 
-- story: say goodbye
+- story: duration risk case
   steps:
   - user: |
-      bye-bye!
-    intent: goodbye
-  - action: utter_goodbye
-
-- story: bot challenge
-  steps:
+      I have a cough
+    intent: ask_symptoms
+  - action: action_dynamic_followup_question
+  - slot_was_set:
+    - triage_state: asking_age
   - user: |
-      are you a bot?
-    intent: bot_challenge
-  - action: utter_iamabot
+      40
+    intent: inform
+  - action: action_handle_inform
+  - slot_was_set:
+    - triage_state: asking_duration
+  - user: |
+      20
+    intent: inform
+  - action: action_handle_inform

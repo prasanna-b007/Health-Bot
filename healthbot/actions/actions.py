@@ -1,3 +1,4 @@
+from ast import Tuple
 from typing import Any, Text, Dict, List, Optional
 import csv
 import os
@@ -5,9 +6,16 @@ import re
 import random
 import difflib
 
+# pyrefly: ignore [missing-import]
 from rasa_sdk import Action, Tracker
+# pyrefly: ignore [missing-import]
 from rasa_sdk.executor import CollectingDispatcher
-from rasa_sdk.events import SlotSet
+# pyrefly: ignore [missing-import]
+from rasa_sdk.events import SlotSet, FollowupAction
+
+from .emergency import check_emergency, handle_emergency
+from .config import THRESHOLDS
+from .scoring import calculate_weighted_match_scores
 
 # ---------------------------------------------------------------------------
 # File Paths
@@ -23,23 +31,7 @@ _SEVERITY_PATH    = os.path.join(_BASE_PATH, "..", "datasets", "Symptom-severity
 # ---------------------------------------------------------------------------
 DISCLAIMER = "\n\n_This is not a medical diagnosis. Please consult a qualified healthcare professional._"
 
-EMERGENCY_SYMPTOMS = [
-    "chest pain", "chest tightness", "pain in chest", "chest hurts",
-    "shortness of breath", "difficulty breathing", "cant breathe",
-    "hard to breathe", "breathing difficulty", "breathless",
-    "unconscious", "unconsciousness", "fainted", "not responding",
-    "severe bleeding", "heavy bleeding", "bleeding heavily",
-    "stroke", "face drooping", "arm weakness", "sudden numbness",
-    "heart attack", "pressure in chest",
-]
-
-EMERGENCY_MSG = (
-    "⚠️ This may be a medical emergency.\n"
-    "Please call emergency services or go to the nearest hospital immediately.\n"
-    "Do not delay care — your safety is the priority."
-)
-
-HIGH_SEVERITY_THRESHOLD = 25
+HIGH_SEVERITY_THRESHOLD = THRESHOLDS["SEVERITY_HIGH"]
 MIN_SYMPTOMS_TO_CONCLUDE = 2
 MAX_QUESTIONS = 5
 _DANGEROUS_DISEASES = ["paralysis (brain hemorrhage)", "heart attack"]
@@ -63,7 +55,7 @@ def _followup_question(symptom: str) -> str:
 # Symptom Aliases
 # ---------------------------------------------------------------------------
 ALIASES: Dict[str, List[str]] = {
-    "fever": ["high fever", "mild fever", "high temperature", "temperature",
+    "high fever": ["fever", "mild fever", "high temperature", "temperature",
               "feverish", "feeling hot", "feaver", "tempature", "running a fever"],
     "headache": ["head pain", "head ache", "head is pounding", "migraine", "headake"],
     "rash": ["skin rash", "nodal skin eruptions", "rashes"],
@@ -169,12 +161,7 @@ def load_precautions() -> Dict[str, List[str]]:
 # ---------------------------------------------------------------------------
 # Emergency & Autocorrect
 # ---------------------------------------------------------------------------
-def is_emergency(text: str) -> bool:
-    text_lower = text.lower()
-    for keyword in EMERGENCY_SYMPTOMS:
-        if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
-            return True
-    return False
+# is_emergency moved to emergency.py
 
 def autocorrect_text(text: str, all_symptoms: List[str]) -> str:
     """Use difflib to correct user typos before extraction."""
@@ -243,35 +230,69 @@ def calculate_match_scores(confirmed: List[str], disease_map: Dict[str, List[str
     return scores
 
 def calculate_risk(
-    match_pct: float,
-    severity_score: int,
     user_age: Optional[int],
     duration_days: Optional[int],
-    severity_input: Optional[int]
-) -> str:
-    risk_levels = ["Low", "Moderate", "High"]
+    severity_input: Optional[int],
+    max_weight: int
+) -> Tuple[str, List[str], int]:
+    reasons = []
+    score = 0
     
-    if match_pct >= 70 or severity_score >= HIGH_SEVERITY_THRESHOLD:
-        idx = 2
-    elif match_pct >= 30:
-        idx = 1
+    # Phase 1: Severity Input
+    sev = severity_input or 1
+    if sev >= 7:
+        score += 25
+        reasons.append(f"High symptom severity ({sev}/10)")
+    elif sev >= 4:
+        score += 15
+        reasons.append(f"Moderate symptom severity ({sev}/10)")
     else:
-        idx = 0
+        score += 5
         
-    if user_age is not None and (user_age < 10 or user_age >= 60):
-        idx += 1
+    # Phase 2: Age Model
+    age = user_age if user_age is not None else 30
+    if age <= 2:
+        score += 25
+        reasons.append("Infant vulnerability")
+    elif age <= 12:
+        score += 5
+        reasons.append("Child vulnerability")
+    elif age >= 60:
+        score += 20
+        reasons.append("Elderly comorbidities")
         
-    if duration_days is not None:
-        if duration_days >= 7:
-            idx = 2
-        elif duration_days >= 3:
-            idx += 1
+    # Phase 3: Max Symptom Weight
+    if max_weight >= 4:
+        score += 30
+        reasons.append("High risk symptoms present")
+    elif max_weight == 3:
+        score += 15
+        reasons.append("Moderate risk symptoms present")
+    elif max_weight == 2:
+        score += 5
+        
+    # Phase 4: Duration Model
+    dur = duration_days or 1
+    if dur >= 7:
+        if max_weight >= 3:
+            score += 15
+            reasons.append(f"Prolonged concerning symptom ({dur} days)")
+    elif dur <= 2:
+        if max_weight >= 4:
+            score += 15
+            reasons.append("Acute onset of severe symptom")
+
+    if not reasons:
+        reasons.append("General assessment")
             
-    if severity_input is not None and severity_input >= 8:
-        idx += 1
+    if score >= 61:
+        risk_level = "High"
+    elif score >= 31:
+        risk_level = "Moderate"
+    else:
+        risk_level = "Low"
         
-    idx = min(2, max(0, idx))
-    return risk_levels[idx]
+    return risk_level, reasons, score
 
 def _filter_dangerous(candidates: List[str], confirmed: List[str], disease_map: Dict[str, List[str]]) -> List[str]:
     safe = []
@@ -326,7 +347,7 @@ def _conclude_triage(
     severity: Optional[int]
 ) -> List[Dict]:
     
-    scores = calculate_match_scores(confirmed, disease_map)
+    scores = calculate_weighted_match_scores(confirmed, disease_map)
     # Filter dangerous from candidates used in scoring to be safe
     # Though ranking handles it implicitly, it's good to keep safe
     
@@ -347,34 +368,43 @@ def _conclude_triage(
         
     top_disease, top_pct = scores[0]
     
-    if top_pct < 40:
+    if top_pct < THRESHOLDS["CONFIDENCE_LOW"]:
         dispatcher.utter_message(text="Your symptoms do not clearly match a known condition.\nPlease provide more details or consult a doctor." + DISCLAIMER)
         return reset_events
         
-    severity_score_sum = sum(severity_map.get(s.replace("_", " "), 0) for s in confirmed)
-    risk = calculate_risk(top_pct, severity_score_sum, user_age, duration, severity)
+    max_weight = max([severity_map.get(s.replace("_", " "), 1) for s in confirmed] + [1])
+    risk, risk_factors, risk_score = calculate_risk(user_age, duration, severity, max_weight)
     
     precautions = precaution_map.get(top_disease.lower(), [])
     risk_emoji = {"Low": "🟢", "Moderate": "🟡", "High": "🔴"}.get(risk, "🟡")
     
+    # Build alternatives list for structured JSON
+    alternatives_list = []
+    if top_pct <= THRESHOLDS["CONFIDENCE_HIGH"] and len(scores) > 1:
+        num_to_show = 2 if top_pct >= THRESHOLDS["CONFIDENCE_MED"] else 3
+        for d, p in scores[1:num_to_show]:
+            alternatives_list.append({"name": d.title(), "confidence": int(p)})
+    
+    advice_list = [p.capitalize() for p in precautions] if precautions else ["Monitor your symptoms closely."]
+    
     lines = [
         f"Based on your symptoms, one possible condition is: **{top_disease.title()}** ({int(top_pct)}% match)",
-        f"Risk Level: {risk}\n"
+        f"Risk Level: {risk} (Score: {risk_score})\n",
+        "Risk Factors Considered:"
     ]
+    for factor in risk_factors:
+        lines.append(f"✓ {factor}")
+    lines.append("")
     
-    if top_pct <= 80 and len(scores) > 1:
-        num_to_show = 2 if top_pct >= 60 else 3
+    if alternatives_list:
         lines.append("Other Potential Matches:")
-        for i, (d, p) in enumerate(scores[1:num_to_show], start=2):
-            lines.append(f"{i}. {d.title()} ({int(p)}%)")
+        for i, alt in enumerate(alternatives_list, start=2):
+            lines.append(f"{i}. {alt['name']} ({alt['confidence']}%)")
         lines.append("")
         
     lines.append("Advice:")
-    if precautions:
-        for p in precautions:
-            lines.append(f"* {p.capitalize()}")
-    else:
-        lines.append("* Monitor your symptoms closely.")
+    for a in advice_list:
+        lines.append(f"* {a}")
         
     lines.append(DISCLAIMER)
     
@@ -386,7 +416,19 @@ def _conclude_triage(
         f"• **Risk Level:** {risk}\n---"
     )
     
-    dispatcher.utter_message(text="\n".join(lines) + summary)
+    dispatcher.utter_message(
+        text="\n".join(lines) + summary,
+        json_message={
+            "type": "result",
+            "condition": top_disease.title(),
+            "confidence": int(top_pct),
+            "risk": risk.lower(),
+            "risk_score": risk_score,
+            "risk_factors": risk_factors,
+            "alternatives": alternatives_list,
+            "advice": advice_list
+        }
+    )
     
     dispatcher.utter_message(text="Was this helpful? (yes/no)")
     reset_events.append(SlotSet("triage_state", "asking_feedback"))
@@ -408,17 +450,26 @@ def _process_triage_step(dispatcher: CollectingDispatcher, tracker: Tracker, add
     
     if user_age is None:
         events.append(SlotSet("triage_state", "asking_age"))
-        dispatcher.utter_message(text="Before we proceed, could you please tell me your age?")
+        dispatcher.utter_message(
+            text="Before we proceed, could you please tell me your age?",
+            json_message={"type": "question", "question_text": "What is your age?", "input_type": "number"}
+        )
         return events
         
     if duration is None:
         events.append(SlotSet("triage_state", "asking_duration"))
-        dispatcher.utter_message(text="How many days have you been experiencing these symptoms?")
+        dispatcher.utter_message(
+            text="How many days have you been experiencing these symptoms?",
+            json_message={"type": "question", "question_text": "How many days have you had these symptoms?", "input_type": "number"}
+        )
         return events
         
     if severity is None:
         events.append(SlotSet("triage_state", "asking_severity"))
-        dispatcher.utter_message(text="On a scale of 1-10, how severe are your symptoms overall?")
+        dispatcher.utter_message(
+            text="On a scale of 1-10, how severe are your symptoms overall?",
+            json_message={"type": "question", "question_text": "Severity (1-10)?", "input_type": "number"}
+        )
         return events
         
     events.append(SlotSet("triage_state", None))
@@ -439,7 +490,11 @@ def _process_triage_step(dispatcher: CollectingDispatcher, tracker: Tracker, add
     if not next_s:
         return _conclude_triage(candidates, confirmed, disease_map, severity_map, precaution_map, dispatcher, events, user_age, duration, severity)
         
-    dispatcher.utter_message(text=_followup_question(next_s))
+    question_text = _followup_question(next_s)
+    dispatcher.utter_message(
+        text=question_text,
+        json_message={"type": "question", "question_text": question_text, "question_number": count + 1, "input_type": "yes_no"}
+    )
     events.extend([
         SlotSet("asked_symptoms", asked + [next_s]),
         SlotSet("pending_symptom", next_s),
@@ -451,23 +506,44 @@ def _process_triage_step(dispatcher: CollectingDispatcher, tracker: Tracker, add
 # ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
+class ActionTriggerEmergency(Action):
+    def name(self) -> Text:
+        return "action_trigger_emergency"
+
+    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        from .emergency import EMERGENCY_MSG
+        dispatcher.utter_message(
+            text=EMERGENCY_MSG,
+            json_message={"type": "emergency", "emergency": True}
+        )
+        return []
+
 class ActionDynamicFollowupQuestion(Action):
     def name(self) -> Text:
         return "action_dynamic_followup_question"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        if check_emergency(tracker):
+            return handle_emergency()
+
         text = (tracker.latest_message.get("text") or "").strip()
 
-        if is_emergency(text):
-            dispatcher.utter_message(text=EMERGENCY_MSG)
-            return [SlotSet("candidate_diseases", []), SlotSet("confirmed_symptoms", []), SlotSet("asked_symptoms", []), SlotSet("pending_symptom", None), SlotSet("question_count", 0), SlotSet("triage_state", None)]
+        # --- Phase 5: Read metadata from Flutter (auto-populate slots) ---
+        metadata = (tracker.latest_message.get("metadata") or {})
+        metadata_events: List[Dict[Text, Any]] = []
+        if metadata.get("age") is not None:
+            metadata_events.append(SlotSet("user_age", int(metadata["age"])))
+        if metadata.get("duration") is not None:
+            metadata_events.append(SlotSet("duration_days", int(metadata["duration"])))
+        if metadata.get("severity") is not None:
+            metadata_events.append(SlotSet("severity", int(metadata["severity"])))
 
         all_symptoms = list(load_severity().keys())
         found = extract_symptoms(text, all_symptoms)
 
         if not found:
-            dispatcher.utter_message(text="I'm here to help. Could you describe your symptoms in a bit more detail? For example: 'I have a fever and headache.'")
-            return []
+            dispatcher.utter_message(text="I couldn't quite understand your symptoms. Could you describe them differently? (e.g. 'I have a high fever and headache')")
+            return metadata_events
 
         disease_map = load_dataset()
         candidates = [d for d, ss in disease_map.items() if any(s in ss for s in found)]
@@ -479,7 +555,7 @@ class ActionDynamicFollowupQuestion(Action):
         combined_found = list(set(existing_confirmed + found))
         combined_asked = list(set(existing_asked + found))
 
-        events = [
+        events = metadata_events + [
             SlotSet("confirmed_symptoms", combined_found),
             SlotSet("candidate_diseases", candidates),
             SlotSet("asked_symptoms", combined_asked),
@@ -494,6 +570,9 @@ class ActionHandleInform(Action):
         return "action_handle_inform"
         
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        if check_emergency(tracker):
+            return handle_emergency()
+
         triage_state = tracker.get_slot("triage_state")
         text = tracker.latest_message.get("text", "")
         numbers = re.findall(r'\d+', text)
@@ -517,6 +596,9 @@ class ActionHandleAffirm(Action):
         return "action_handle_affirm"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        if check_emergency(tracker):
+            return handle_emergency()
+
         triage_state = tracker.get_slot("triage_state")
         if triage_state == "asking_feedback":
             dispatcher.utter_message(text="Thank you for your feedback! Take care.")
@@ -548,6 +630,9 @@ class ActionHandleDeny(Action):
         return "action_handle_deny"
 
     def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        if check_emergency(tracker):
+            return handle_emergency()
+
         triage_state = tracker.get_slot("triage_state")
         if triage_state == "asking_feedback":
             dispatcher.utter_message(text="Thank you for your feedback! We will use it to improve.")

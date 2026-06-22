@@ -64,10 +64,16 @@ rasa train
 ```powershell
 python scratch/full_audit.py
 ```
+
+# Health-Bot
 cd d:\Projects\Health-Bot\healthbot
 .\venv\Scripts\activate
 rasa run actions
 
 cd d:\Projects\Health-Bot\healthbot
 .\venv\Scripts\activate
-rasa shell
+rasa run --enable-api --cors "*" --port 5005
+
+cd d:\Projects\Health-Bot\health_bot_app
+flutter pub get
+flutter run
