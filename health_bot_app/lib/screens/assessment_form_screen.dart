@@ -16,8 +16,21 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen> {
   int _age = 22;
   String _duration = '2-3 days';
   int _severity = 5;
+  late final TextEditingController _ageController;
 
   final List<String> _durations = ['1 day', '2-3 days', '4-7 days', '> 1 week'];
+
+  @override
+  void initState() {
+    super.initState();
+    _ageController = TextEditingController(text: _age.toString());
+  }
+
+  @override
+  void dispose() {
+    _ageController.dispose();
+    super.dispose();
+  }
 
   void _onContinue() {
     final data = AssessmentData(
@@ -48,13 +61,17 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Age', style: AppText.h3),
+              Text('How old are you?', style: AppText.h3),
+              const SizedBox(height: AppTheme.spacing8),
+              Text('Your age helps us assess risk factors.', style: AppText.caption),
               const SizedBox(height: AppTheme.spacing16),
               TextField(
+                controller: _ageController,
                 keyboardType: TextInputType.number,
-                style: AppText.body,
+                style: AppText.h2.copyWith(fontFeatures: [const FontFeature.tabularFigures()]),
+                textAlign: TextAlign.center,
                 decoration: InputDecoration(
-                  hintText: 'Enter your age',
+                  hintText: 'Age',
                   hintStyle: AppText.bodyMuted,
                   filled: true,
                   fillColor: AppColors.card,
@@ -68,9 +85,9 @@ class _AssessmentFormScreenState extends State<AssessmentFormScreen> {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppTheme.radiusBorder),
-                    borderSide: const BorderSide(color: AppColors.primary),
+                    borderSide: const BorderSide(color: AppColors.primary, width: 2),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: AppTheme.spacing16, vertical: AppTheme.spacing16),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: AppTheme.spacing16, vertical: AppTheme.spacing24),
                 ),
                 onChanged: (val) {
                   final parsed = int.tryParse(val);
