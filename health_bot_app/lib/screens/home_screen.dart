@@ -3,7 +3,8 @@ import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../theme/app_theme.dart';
 import 'assessment_form_screen.dart';
-import 'emergency_screen.dart';
+import 'hospital_finder_screen.dart';
+import '../services/api_service.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -40,7 +41,10 @@ class HomeScreen extends StatelessWidget {
                 isEmergency: true,
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const EmergencyScreen(reason: 'User activated emergency mode.')),
+                  MaterialPageRoute(builder: (context) => HospitalFinderScreen(
+                    apiService: ApiService(),
+                    emergencyReason: 'User activated emergency mode.',
+                  )),
                 ),
               ),
               

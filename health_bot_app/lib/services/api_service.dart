@@ -40,13 +40,25 @@ class ApiService {
   }
 
   // -----------------------------------------------------------------------
-  // Answer a follow-up question
+  // Answer a follow-up question (yes / no / unsure)
   // -----------------------------------------------------------------------
 
-  /// Sends "yes" or "no" to continue the Rasa triage conversation.
-  Future<TriageResponse> answerQuestion(bool answer) async {
+  /// Sends "yes", "no", or "I'm not sure" to continue the Rasa triage conversation.
+  Future<TriageResponse> answerQuestion(AnswerType answer) async {
     try {
-      final responses = await _rasa.sendMessage(answer ? 'yes' : 'no');
+      String message;
+      switch (answer) {
+        case AnswerType.yes:
+          message = 'yes';
+          break;
+        case AnswerType.no:
+          message = 'no';
+          break;
+        case AnswerType.unsure:
+          message = "I'm not sure";
+          break;
+      }
+      final responses = await _rasa.sendMessage(message);
       return _parseTriageResponse(responses);
     } catch (e) {
       return TriageResponse(
@@ -64,9 +76,9 @@ class ApiService {
     // In a production app this would call a location API.
     // Kept as static data to avoid an external dependency.
     return [
-      HospitalData(name: 'City General Hospital', distance: '1.2 mi', phone: '555-0199'),
-      HospitalData(name: 'Mercy Medical Center', distance: '3.4 mi', phone: '555-0188'),
-      HospitalData(name: 'Westside Urgent Care', distance: '4.1 mi', phone: '555-0177'),
+      HospitalData(name: 'City General Hospital', distance: '1.2 km away', rawDistance: 1200, phone: '555-0199', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'General Hospital', estimatedTimeMins: 3),
+      HospitalData(name: 'Mercy Medical Center', distance: '3.4 km away', rawDistance: 3400, phone: '555-0188', hasEmergency: false, website: '', latitude: 0, longitude: 0, type: 'Private Hospital', estimatedTimeMins: 7),
+      HospitalData(name: 'Westside Urgent Care', distance: '4.1 km away', rawDistance: 4100, phone: '555-0177', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'Medical Facility', estimatedTimeMins: 9),
     ];
   }
 
@@ -103,11 +115,24 @@ class ApiService {
             .toList();
         final adviceRaw = custom['advice'] as List<dynamic>? ?? [];
         final adviceText = adviceRaw.map((a) => '• $a').join('\n');
+        
+        // Parse matched symptoms
+        final matchedRaw = custom['matched_symptoms'] as List<dynamic>? ?? [];
+        final matchedSymptoms = matchedRaw.map((s) => s.toString()).toList();
+        
+        // Parse recommended action
+        final recommendedAction = (custom['recommended_action'] as String?) ?? '';
+        
+        // Parse alternatives as raw maps for the results screen
+        final alternativesRaw = altRaw
+            .map((a) => a is Map ? Map<String, dynamic>.from(a) : <String, dynamic>{})
+            .toList();
 
         return TriageResponse(
           isEmergency: false,
           result: AssessmentResult(
-            conditionName: (custom['condition'] as String?) ?? 'Unknown',
+            conditionName: (custom['top_condition'] as String?) ?? 
+                           (custom['condition'] as String?) ?? 'Unknown',
             matchPercentage:
                 (custom['confidence'] as num?)?.toDouble() ?? 0.0,
             alternateMatches: alternateNames.cast<String>(),
@@ -115,6 +140,9 @@ class ApiService {
             riskScore: (custom['risk_score'] as int?) ?? 0,
             riskFactors: (custom['risk_factors'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
             advice: adviceText.isNotEmpty ? adviceText : (r.text ?? ''),
+            recommendedAction: recommendedAction,
+            matchedSymptoms: matchedSymptoms,
+            alternativesRaw: alternativesRaw,
           ),
         );
       }
@@ -134,9 +162,14 @@ class ApiService {
       );
     }
 
-    final qText = questionResponse.custom?['question_text'] as String? ?? questionResponse.text ?? 'Please answer:';
-    final qNum = questionResponse.custom?['question_number'] as int? ?? 1;
-    final qInput = questionResponse.custom?['input_type'] as String? ?? 'yes_no';
+    final qCustom = questionResponse.custom ?? {};
+    final qText = qCustom['question'] as String? ??
+                   qCustom['question_text'] as String? ?? 
+                   questionResponse.text ?? 'Please answer:';
+    final qNum = qCustom['question_number'] as int? ?? 1;
+    final qInput = qCustom['input_type'] as String? ?? 'yes_no';
+    final qReason = qCustom['reason'] as String? ?? '';
+    final qEstTotal = qCustom['estimated_total'] as int? ?? 5;
 
     return TriageResponse(
       isEmergency: false,
@@ -145,6 +178,8 @@ class ApiService {
         id: 'q$qNum',
         inputType: qInput,
         questionNumber: qNum,
+        reason: qReason,
+        estimatedTotal: qEstTotal,
       ),
     );
   }
@@ -179,11 +214,25 @@ class TriageResponse {
 class HospitalData {
   final String name;
   final String distance;
+  final double rawDistance;
   final String phone;
+  final bool hasEmergency;
+  final String website;
+  final double latitude;
+  final double longitude;
+  final String type;
+  final int estimatedTimeMins;
 
   HospitalData({
     required this.name,
     required this.distance,
+    required this.rawDistance,
     required this.phone,
+    required this.hasEmergency,
+    required this.website,
+    required this.latitude,
+    required this.longitude,
+    required this.type,
+    required this.estimatedTimeMins,
   });
 }

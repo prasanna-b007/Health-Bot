@@ -1,0 +1,12 @@
+{
+  "0": "affirm",
+  "1": "ask_symptoms",
+  "2": "bot_challenge",
+  "3": "deny",
+  "4": "disease_info",
+  "5": "disease_prevention",
+  "6": "goodbye",
+  "7": "greet",
+  "8": "outbreak_query",
+  "9": "vaccination_query"
+}

@@ -1,0 +1,9 @@
+{
+  "0": "ask_symptoms",
+  "1": "bot_challenge",
+  "2": "disease_prevention",
+  "3": "goodbye",
+  "4": "greet",
+  "5": "outbreak_query",
+  "6": "vaccination_query"
+}

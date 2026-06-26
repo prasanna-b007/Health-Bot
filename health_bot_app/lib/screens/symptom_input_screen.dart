@@ -5,8 +5,10 @@ import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../theme/app_theme.dart';
 import 'dynamic_triage_screen.dart';
-import 'emergency_screen.dart';
+import 'hospital_finder_screen.dart';
 import 'results_screen.dart';
+
+import '../widgets/stage_tracker.dart';
 
 class SymptomInputScreen extends StatefulWidget {
   final AssessmentData data;
@@ -56,8 +58,9 @@ class _SymptomInputScreenState extends State<SymptomInputScreen> {
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => EmergencyScreen(
-            reason: response.emergencyReason ?? 'Emergency symptoms detected.',
+          pageBuilder: (context, animation, secondaryAnimation) => HospitalFinderScreen(
+            apiService: _apiService,
+            emergencyReason: response.emergencyReason ?? 'Emergency symptoms detected.',
           ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
@@ -66,26 +69,23 @@ class _SymptomInputScreenState extends State<SymptomInputScreen> {
     } else if (response.result != null) {
       Navigator.push(
         context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => ResultsScreen(
+        MaterialPageRoute(
+          builder: (context) => ResultsScreen(
             data: widget.data,
             result: response.result!,
+            apiService: _apiService,
           ),
-          transitionDuration: Duration.zero,
-          reverseTransitionDuration: Duration.zero,
         ),
       );
     } else if (response.nextQuestion != null) {
       Navigator.push(
         context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => DynamicTriageScreen(
+        MaterialPageRoute(
+          builder: (context) => DynamicTriageScreen(
             data: widget.data,
             apiService: _apiService,
             currentQuestion: response.nextQuestion!,
           ),
-          transitionDuration: Duration.zero,
-          reverseTransitionDuration: Duration.zero,
         ),
       );
     }
@@ -124,6 +124,8 @@ class _SymptomInputScreenState extends State<SymptomInputScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const StageTracker(currentStage: TriageStage.symptoms),
+              const SizedBox(height: AppTheme.spacing24),
               TextField(
                 controller: _symptomController,
                 maxLines: 4,

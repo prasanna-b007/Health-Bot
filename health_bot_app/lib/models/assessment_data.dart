@@ -43,14 +43,28 @@ class TriageQuestion {
   final String id;
   final String inputType; // 'yes_no', 'number', 'text'
   final int questionNumber;
+  final String reason;
+  final int estimatedTotal;
 
   TriageQuestion({
     required this.text,
     required this.id,
     this.inputType = 'yes_no',
     this.questionNumber = 1,
+    this.reason = '',
+    this.estimatedTotal = 5,
   });
 }
+
+/// Represents a question + answer pair for the wizard history stack.
+class QuestionAnswer {
+  final TriageQuestion question;
+  final AnswerType answer;
+
+  QuestionAnswer({required this.question, required this.answer});
+}
+
+enum AnswerType { yes, no, unsure }
 
 class AssessmentResult {
   final String conditionName;
@@ -60,6 +74,9 @@ class AssessmentResult {
   final int riskScore;
   final List<String> riskFactors;
   final String advice;
+  final String recommendedAction;
+  final List<String> matchedSymptoms;
+  final List<Map<String, dynamic>> alternativesRaw;
 
   AssessmentResult({
     required this.conditionName,
@@ -69,5 +86,8 @@ class AssessmentResult {
     this.riskScore = 0,
     this.riskFactors = const [],
     required this.advice,
+    this.recommendedAction = '',
+    this.matchedSymptoms = const [],
+    this.alternativesRaw = const [],
   });
 }

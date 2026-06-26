@@ -4,7 +4,7 @@ import '../services/api_service.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../theme/app_theme.dart';
-import 'emergency_screen.dart';
+import 'hospital_finder_screen.dart';
 import 'results_screen.dart';
 
 import '../widgets/stage_tracker.dart';
@@ -96,8 +96,9 @@ class _DynamicTriageScreenState extends State<DynamicTriageScreen> {
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => EmergencyScreen(
-            reason: response.emergencyReason ?? 'Emergency symptoms detected.',
+          pageBuilder: (context, animation, secondaryAnimation) => HospitalFinderScreen(
+            apiService: widget.apiService,
+            emergencyReason: response.emergencyReason ?? 'Emergency symptoms detected.',
           ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,

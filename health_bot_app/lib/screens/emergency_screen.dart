@@ -4,6 +4,7 @@ import '../theme/colors.dart';
 import '../theme/text_styles.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hospital_list_item.dart';
+import 'hospital_finder_screen.dart';
 
 class EmergencyScreen extends StatefulWidget {
   final String reason;
@@ -19,35 +20,6 @@ class EmergencyScreen extends StatefulWidget {
 
 class _EmergencyScreenState extends State<EmergencyScreen> {
   final _apiService = ApiService();
-  bool _isLoading = true;
-  List<HospitalData> _hospitals = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadHospitals();
-  }
-
-  void _loadHospitals() async {
-    try {
-      final hospitals = await _apiService.getNearbyHospitals();
-      if (mounted) {
-        setState(() {
-          _hospitals = hospitals;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-
-  
   void _onCallEmergency() {
     // In a real app, this would dial 911 or local emergency
   }
@@ -105,7 +77,14 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                   ),
                   const SizedBox(height: AppTheme.spacing16),
                   OutlinedButton(
-                    onPressed: () {}, // Handled below in UI
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => HospitalFinderScreen(apiService: _apiService),
+                        ),
+                      );
+                    },
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.card,
                       side: const BorderSide(color: AppColors.card, width: 2),
@@ -122,36 +101,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
             Expanded(
               child: Container(
                 color: AppColors.background,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(AppTheme.spacing24),
-                      child: Text('Nearby Hospitals', style: AppText.h3),
-                    ),
-                    Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-                          : _hospitals.isEmpty
-                              ? const Center(
-                                  child: Text('Please contact local emergency services.'),
-                                )
-                              : ListView.separated(
-                                  padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacing24),
-                                  itemCount: _hospitals.length,
-                                  separatorBuilder: (context, index) => const Divider(color: AppColors.border, height: AppTheme.spacing32),
-                                  itemBuilder: (context, index) {
-                                    final h = _hospitals[index];
-                                    return HospitalListItem(
-                                      name: h.name,
-                                      distance: h.distance,
-                                      onCallPressed: () {},
-                                    );
-                                  },
-                                ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ],

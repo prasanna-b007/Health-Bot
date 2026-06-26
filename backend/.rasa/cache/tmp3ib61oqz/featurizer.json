@@ -1,0 +1,61 @@
+{
+  "type": "MaxHistoryTrackerFeaturizer",
+  "state_featurizer": {
+    "action_texts": [],
+    "entity_tag_specs": [],
+    "feature_states": {
+      "intent": {
+        "affirm": 0,
+        "ask_symptoms": 1,
+        "back": 2,
+        "bot_challenge": 3,
+        "deny": 4,
+        "disease_info": 5,
+        "disease_prevention": 6,
+        "goodbye": 7,
+        "greet": 8,
+        "nlu_fallback": 9,
+        "out_of_scope": 10,
+        "outbreak_query": 11,
+        "restart": 12,
+        "session_start": 13,
+        "vaccination_query": 14
+      },
+      "action_name": {
+        "action_listen": 0,
+        "action_restart": 1,
+        "action_session_start": 2,
+        "action_default_fallback": 3,
+        "action_deactivate_loop": 4,
+        "action_revert_fallback_events": 5,
+        "action_default_ask_affirmation": 6,
+        "action_default_ask_rephrase": 7,
+        "action_two_stage_fallback": 8,
+        "action_unlikely_intent": 9,
+        "action_back": 10,
+        "...": 11,
+        "action_extract_slots": 12,
+        "action_disease_description": 13,
+        "action_disease_precaution": 14,
+        "action_vaccination_schedule": 15,
+        "action_dynamic_followup_question": 16,
+        "action_handle_affirm": 17,
+        "action_handle_deny": 18,
+        "utter_ask_symptoms_fallback": 19,
+        "utter_bot_challenge": 20,
+        "utter_goodbye": 21,
+        "utter_greet": 22,
+        "utter_outbreak_query": 23,
+        "utter_vaccination_query": 24
+      },
+      "entities": {
+        "disease": 0,
+        "symptom": 1
+      },
+      "slots": {},
+      "active_loop": {}
+    }
+  },
+  "remove_duplicates": true,
+  "max_history": null
+}

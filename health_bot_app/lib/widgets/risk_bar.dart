@@ -36,8 +36,8 @@ class RiskBar extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Risk Level', style: AppText.dataLabel),
-            Text(riskLevel.name.toUpperCase(), style: AppText.dataLabel.copyWith(color: riskColor, fontWeight: FontWeight.bold)),
+            Text('RISK', style: AppText.dataLabel.copyWith(letterSpacing: 0.4)),
+            Text(riskLevel.name.toUpperCase(), style: AppText.dataValue.copyWith(color: riskColor, fontWeight: FontWeight.bold)),
           ],
         ),
         const SizedBox(height: 8),
@@ -47,15 +47,21 @@ class RiskBar extends StatelessWidget {
             color: AppColors.border,
             borderRadius: BorderRadius.circular(4),
           ),
-          child: FractionallySizedBox(
-            alignment: Alignment.centerLeft,
-            widthFactor: fillPercent,
-            child: Container(
-              decoration: BoxDecoration(
-                color: riskColor,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Align(
+                alignment: Alignment.centerLeft,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                  width: constraints.maxWidth * fillPercent,
+                  decoration: BoxDecoration(
+                    color: riskColor,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              );
+            },
           ),
         ),
         const SizedBox(height: 24),

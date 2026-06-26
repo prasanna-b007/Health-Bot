@@ -16,5 +16,6 @@ class AppColors {
   
   // For backwards compatibility or aliases if any code still uses them:
   static const Color ink = primary;
+  static const Color inkMuted = subtext;
   static const Color surface = card;
 }
