@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 class RasaService {
   /// Default: Android emulator loopback.
   /// Change to your machine's LAN IP for physical devices,
-  static String baseUrl = 'http://10.20.16.186:5005';
+  static String baseUrl = 'http://10.20.24.51:5005';
 
   late String _senderId;
 
@@ -18,7 +18,6 @@ class RasaService {
   }
 
   String get senderId => _senderId;
-
   /// Generate a unique sender ID per session.
   static String _generateSenderId() {
     final ts = DateTime.now().millisecondsSinceEpoch;

@@ -57,6 +57,7 @@ class ResultsScreen extends StatelessWidget {
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) => HospitalFinderScreen(
           apiService: apiService,
+          specialistName: result.specialist.name,
         ),
         transitionDuration: Duration.zero,
         reverseTransitionDuration: Duration.zero,
@@ -110,6 +111,7 @@ Date: ${DateTime.now().toString().split(' ')[0]}
 Symptoms: $symptoms
 Risk Level: ${result.riskLevel.toUpperCase()}
 Recommended Action: ${result.recommendedAction}
+Recommended Specialist: ${result.specialist.name}
 
 Possible Conditions:
 - ${result.conditionName} (${result.matchPercentage.toInt()}%)
@@ -130,7 +132,7 @@ Disclaimer: This is not a medical diagnosis. If in doubt, consult a healthcare p
         backgroundColor: AppColors.background,
         elevation: 0,
         iconTheme: const IconThemeData(color: AppColors.primary),
-        title: Text('Assessment Complete', style: AppText.h3),
+        title: Text('Your Assessment', style: AppText.h3),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -225,6 +227,11 @@ Disclaimer: This is not a medical diagnosis. If in doubt, consult a healthcare p
                           ),
                           if (result.matchedSymptoms.isNotEmpty) ...[
                             const SizedBox(height: AppTheme.spacing8),
+                            Text(
+                              'WHY THIS PREDICTION?',
+                              style: AppText.dataLabel,
+                            ),
+                            const SizedBox(height: AppTheme.spacing8),
                             Wrap(
                               spacing: AppTheme.spacing8,
                               runSpacing: AppTheme.spacing8,
@@ -247,6 +254,49 @@ Disclaimer: This is not a medical diagnosis. If in doubt, consult a healthcare p
                     ),
                     const SizedBox(height: AppTheme.spacing16),
                   ],
+
+                  // ── Specialist recommendation card ──
+                  Container(
+                    padding: const EdgeInsets.all(AppTheme.spacing16),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      border: Border.all(color: AppColors.border, width: 0.5),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusBorder),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.medical_services_outlined,
+                          size: 20,
+                          color: AppColors.ink,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'RECOMMENDED SPECIALIST',
+                                style: AppText.dataLabel,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                result.specialist.name,
+                                style: AppText.h3,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                result.specialist.description,
+                                style: AppText.bodyMuted,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppTheme.spacing16),
 
                   // ── Less Likely Conditions (collapsed by default) ──
                   if (result.alternateMatches.isNotEmpty) ...[

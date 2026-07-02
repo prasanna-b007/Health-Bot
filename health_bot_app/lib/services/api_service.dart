@@ -76,9 +76,9 @@ class ApiService {
     // In a production app this would call a location API.
     // Kept as static data to avoid an external dependency.
     return [
-      HospitalData(name: 'City General Hospital', distance: '1.2 km away', rawDistance: 1200, phone: '555-0199', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'General Hospital', estimatedTimeMins: 3),
-      HospitalData(name: 'Mercy Medical Center', distance: '3.4 km away', rawDistance: 3400, phone: '555-0188', hasEmergency: false, website: '', latitude: 0, longitude: 0, type: 'Private Hospital', estimatedTimeMins: 7),
-      HospitalData(name: 'Westside Urgent Care', distance: '4.1 km away', rawDistance: 4100, phone: '555-0177', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'Medical Facility', estimatedTimeMins: 9),
+      HospitalData(name: 'City General Hospital', distance: '1.2 km away', rawDistance: 1200, phone: '555-0199', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'General Hospital', estimatedTimeMins: 3, address: '123 Main St'),
+      HospitalData(name: 'Mercy Medical Center', distance: '3.4 km away', rawDistance: 3400, phone: '555-0188', hasEmergency: false, website: '', latitude: 0, longitude: 0, type: 'Private Hospital', estimatedTimeMins: 7, address: '456 Oak Ave'),
+      HospitalData(name: 'Westside Urgent Care', distance: '4.1 km away', rawDistance: 4100, phone: '555-0177', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'Medical Facility', estimatedTimeMins: 9, address: '789 Pine Rd'),
     ];
   }
 
@@ -128,6 +128,12 @@ class ApiService {
             .map((a) => a is Map ? Map<String, dynamic>.from(a) : <String, dynamic>{})
             .toList();
 
+        // Parse specialist info
+        final specialistRaw = custom['specialist'] as Map<String, dynamic>?;
+        final specialist = specialistRaw != null
+            ? SpecialistInfo.fromJson(specialistRaw)
+            : null;
+
         return TriageResponse(
           isEmergency: false,
           result: AssessmentResult(
@@ -143,6 +149,7 @@ class ApiService {
             recommendedAction: recommendedAction,
             matchedSymptoms: matchedSymptoms,
             alternativesRaw: alternativesRaw,
+            specialist: specialist,
           ),
         );
       }
@@ -222,6 +229,7 @@ class HospitalData {
   final double longitude;
   final String type;
   final int estimatedTimeMins;
+  final String address;
 
   HospitalData({
     required this.name,
@@ -234,5 +242,6 @@ class HospitalData {
     required this.longitude,
     required this.type,
     required this.estimatedTimeMins,
+    required this.address,
   });
 }

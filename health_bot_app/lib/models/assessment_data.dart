@@ -66,6 +66,20 @@ class QuestionAnswer {
 
 enum AnswerType { yes, no, unsure }
 
+class SpecialistInfo {
+  final String name;
+  final String description;
+
+  SpecialistInfo({required this.name, required this.description});
+
+  factory SpecialistInfo.fromJson(Map<String, dynamic> json) {
+    return SpecialistInfo(
+      name: json['name'] ?? 'General Physician',
+      description: json['description'] ?? '',
+    );
+  }
+}
+
 class AssessmentResult {
   final String conditionName;
   final double matchPercentage;
@@ -77,6 +91,7 @@ class AssessmentResult {
   final String recommendedAction;
   final List<String> matchedSymptoms;
   final List<Map<String, dynamic>> alternativesRaw;
+  final SpecialistInfo specialist;
 
   AssessmentResult({
     required this.conditionName,
@@ -89,5 +104,9 @@ class AssessmentResult {
     this.recommendedAction = '',
     this.matchedSymptoms = const [],
     this.alternativesRaw = const [],
-  });
+    SpecialistInfo? specialist,
+  }) : specialist = specialist ?? SpecialistInfo(
+    name: 'General Physician',
+    description: 'A general physician can assess your condition.',
+  );
 }

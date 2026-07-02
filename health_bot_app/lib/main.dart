@@ -11,7 +11,7 @@ class HealthBotApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Health-Bot',
+      title: 'MedPlot',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

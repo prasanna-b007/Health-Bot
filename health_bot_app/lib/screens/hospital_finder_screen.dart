@@ -11,8 +11,9 @@ import 'package:url_launcher/url_launcher.dart';
 class HospitalFinderScreen extends StatefulWidget {
   final ApiService apiService;
   final String? emergencyReason;
+  final String? specialistName;
 
-  const HospitalFinderScreen({super.key, required this.apiService, this.emergencyReason});
+  const HospitalFinderScreen({super.key, required this.apiService, this.emergencyReason, this.specialistName});
 
   @override
   State<HospitalFinderScreen> createState() => _HospitalFinderScreenState();
@@ -79,28 +80,25 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
       
       List<HospitalData> liveHospitals = [];
       for (var element in fetchedHospitals) {
-        final tags = element['tags'];
-        if (tags == null) continue;
+        final properties = element['properties'];
+        if (properties == null) continue;
 
-        final name = tags['name'] ?? 'Medical Center';
-        final phone = tags['contact:phone'] ?? tags['phone'] ?? 'N/A';
-        final website = tags['website'] ?? tags['contact:website'] ?? '';
-        final hasEmergency = tags['emergency'] == 'yes';
+        final name = properties['name'] ?? 'Medical Center';
+        final phone = properties['contact:phone'] ?? properties['phone'] ?? 'N/A';
+        final website = properties['website'] ?? properties['contact:website'] ?? '';
+        final hasEmergency = properties['emergency'] == 'yes';
         
-        final double hLat = element['lat'] ?? element['center']?['lat'] ?? 0.0;
-        final double hLon = element['lon'] ?? element['center']?['lon'] ?? 0.0;
+        final double hLat = properties['lat'] ?? 0.0;
+        final double hLon = properties['lon'] ?? 0.0;
         
         if (hLat == 0.0 || hLon == 0.0) continue;
         
-        double distanceMeters = Geolocator.distanceBetween(latitude, longitude, hLat, hLon);
+        double distanceMeters = (properties['distance'] as num?)?.toDouble() ?? Geolocator.distanceBetween(latitude, longitude, hLat, hLon);
         final distanceKm = distanceMeters / 1000;
         String distanceStr = '${distanceKm.toStringAsFixed(1)} km away';
 
-        final amenity = tags['amenity'];
-        final healthcare = tags['healthcare'];
-        String type = 'Medical Facility';
-        if (amenity == 'hospital' || healthcare == 'hospital') type = 'General Hospital';
-        else if (amenity == 'clinic' || healthcare == 'clinic') type = 'Clinic';
+        String type = 'General Hospital';
+        final address = properties['formatted'] ?? '';
 
         final estimatedTimeMins = ((distanceKm / 30) * 60).round();
 
@@ -115,6 +113,7 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
           longitude: hLon,
           type: type,
           estimatedTimeMins: estimatedTimeMins,
+          address: address,
         ));
       }
 
@@ -130,9 +129,12 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
         _hospitals = liveHospitals;
         _isLoading = false;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print("Hospital Finder Error: $e");
+      print(stackTrace);
+
       setState(() {
-        _errorMessage = 'Unable to load nearby hospitals.\n\nPlease check your internet connection and try again.';
+        _errorMessage = e.toString();
         _isLoading = false;
       });
     }
@@ -172,7 +174,12 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Nearest medical facilities based on your current location.', style: AppText.bodyMuted),
+                    Text(
+                      widget.specialistName != null
+                          ? 'Finding hospitals near you. Ask for a ${widget.specialistName}.'
+                          : 'Nearest medical facilities based on your current location.',
+                      style: AppText.bodyMuted,
+                    ),
                     const SizedBox(height: AppTheme.spacing8),
                     Text('${_hospitals.length} hospitals found', style: AppText.body.copyWith(fontWeight: FontWeight.bold)),
                   ],
@@ -298,12 +305,48 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
   }
 
   Future<void> _launchUrlString(String urlString) async {
-    final uri = Uri.parse(urlString);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      debugPrint('Could not launch $urlString');
+    debugPrint('──── URL LAUNCH DEBUG ────');
+    debugPrint('URL: $urlString');
+
+    final uri = Uri.tryParse(urlString);
+    if (uri == null) {
+      debugPrint('ERROR: Failed to parse URL');
+      _showError('Invalid URL. Could not open directions.');
+      return;
     }
+
+    // Check if this is a directions URL with invalid coordinates
+    if (urlString.contains('destination=0.0,0.0') ||
+        urlString.contains('destination=0,0')) {
+      debugPrint('ERROR: Invalid coordinates (0,0)');
+      _showError('Hospital location data is unavailable.');
+      return;
+    }
+
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      debugPrint('launchUrl result: $launched');
+
+      if (!launched) {
+        _showError('Could not open Google Maps.');
+      }
+    } catch (e) {
+      debugPrint('launchUrl exception: $e');
+      _showError(e.toString());
+    }
+    debugPrint('──────────────────────────');
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.riskHigh,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   void _showAllHospitalsSheet() {
@@ -332,7 +375,11 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
                 itemBuilder: (context, index) => _AnimatedHospitalCard(
                   hospital: _hospitals[index],
                   index: index,
-                  onDirections: () => _launchUrlString('https://www.google.com/maps/search/?api=1&query=${_hospitals[index].latitude},${_hospitals[index].longitude}'),
+                  onDirections: () {
+                    final hospital = _hospitals[index];
+                    debugPrint('Directions pressed: ${hospital.name} | lat=${hospital.latitude}, lon=${hospital.longitude}');
+                    _launchUrlString('https://www.google.com/maps/dir/?api=1&destination=${hospital.latitude},${hospital.longitude}');
+                  },
                   onCall: () => _launchUrlString('tel:${_hospitals[index].phone}'),
                   onWebsite: () {
                     String url = _hospitals[index].website;
@@ -363,7 +410,10 @@ class _HospitalFinderScreenState extends State<HospitalFinderScreen> {
               return _AnimatedHospitalCard(
                 hospital: h,
                 index: index,
-                onDirections: () => _launchUrlString('https://www.google.com/maps/search/?api=1&query=${h.latitude},${h.longitude}'),
+                onDirections: () {
+                  debugPrint('Directions pressed: ${h.name} | lat=${h.latitude}, lon=${h.longitude}');
+                  _launchUrlString('https://www.google.com/maps/dir/?api=1&destination=${h.latitude},${h.longitude}');
+                },
                 onCall: () => _launchUrlString('tel:${h.phone}'),
                 onWebsite: () {
                   String url = h.website;

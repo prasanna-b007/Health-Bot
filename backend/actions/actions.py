@@ -18,6 +18,339 @@ from .scoring import calculate_weighted_match_scores
 from .reason_map import REASON_MAP, DEFAULT_REASON
 
 # ---------------------------------------------------------------------------
+# Specialist mapping — covers every disease in dataset.csv
+# Keys use .title() casing to match the value sent in json_message
+# ---------------------------------------------------------------------------
+SPECIALIST_MAP = {
+    # Respiratory
+    "Pneumonia": {
+        "name": "Pulmonologist",
+        "description": "Specialist in lung and respiratory diseases.",
+        "icon": "lungs",
+        "priority": "Immediate",
+        "department": "Pulmonology"
+    },
+    "Bronchial Asthma": {
+        "name": "Pulmonologist",
+        "description": "Specialist in lung and respiratory diseases.",
+        "icon": "lungs",
+        "priority": "Soon",
+        "department": "Pulmonology"
+    },
+    "Tuberculosis": {
+        "name": "Pulmonologist",
+        "description": "Specialist in lung and respiratory diseases.",
+        "icon": "lungs",
+        "priority": "Immediate",
+        "department": "Pulmonology"
+    },
+    "Common Cold": {
+        "name": "General Physician",
+        "description": "A general physician manages common viral infections.",
+        "icon": "general",
+        "priority": "Routine",
+        "department": "General Medicine"
+    },
+    "Allergy": {
+        "name": "Allergist / Immunologist",
+        "description": "Specialist in allergic reactions and immune system conditions.",
+        "icon": "immune",
+        "priority": "Soon",
+        "department": "Allergy & Immunology"
+    },
+
+    # Heart & Circulation
+    "Heart Attack": {
+        "name": "Cardiologist",
+        "description": "Specialist in heart and cardiovascular conditions.",
+        "icon": "heart",
+        "priority": "Immediate",
+        "department": "Cardiology"
+    },
+    "Hypertension": {
+        "name": "Cardiologist",
+        "description": "Specialist in heart and blood pressure conditions.",
+        "icon": "heart",
+        "priority": "Soon",
+        "department": "Cardiology"
+    },
+    "Hypertension ": {
+        "name": "Cardiologist",
+        "description": "Specialist in heart and blood pressure conditions.",
+        "icon": "heart",
+        "priority": "Soon",
+        "department": "Cardiology"
+    },
+    "Varicose Veins": {
+        "name": "Vascular Surgeon",
+        "description": "Specialist in vein and blood vessel conditions.",
+        "icon": "blood",
+        "priority": "Routine",
+        "department": "Vascular Surgery"
+    },
+
+    # Neurological
+    "Migraine": {
+        "name": "Neurologist",
+        "description": "Specialist in brain and nervous system disorders.",
+        "icon": "brain",
+        "priority": "Soon",
+        "department": "Neurology"
+    },
+    "(Vertigo) Paroymsal  Positional Vertigo": {
+        "name": "Neurologist",
+        "description": "Specialist in balance and nervous system disorders.",
+        "icon": "brain",
+        "priority": "Soon",
+        "department": "Neurology"
+    },
+    "Cervical Spondylosis": {
+        "name": "Orthopedic Surgeon",
+        "description": "Specialist in spine, bone, and joint conditions.",
+        "icon": "bone",
+        "priority": "Routine",
+        "department": "Orthopedics"
+    },
+    "Paralysis (Brain Hemorrhage)": {
+        "name": "Neurologist",
+        "description": "Specialist in brain and nervous system conditions.",
+        "icon": "brain",
+        "priority": "Immediate",
+        "department": "Neurology"
+    },
+
+    # Digestive / Liver
+    "Chronic Cholestasis": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver and digestive system conditions.",
+        "icon": "stomach",
+        "priority": "Soon",
+        "department": "Gastroenterology"
+    },
+    "Jaundice": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver and digestive system conditions.",
+        "icon": "stomach",
+        "priority": "Soon",
+        "department": "Gastroenterology"
+    },
+    "Hepatitis A": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver infections and digestive conditions.",
+        "icon": "stomach",
+        "priority": "Soon",
+        "department": "Gastroenterology"
+    },
+    "Hepatitis B": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver infections and digestive conditions.",
+        "icon": "stomach",
+        "priority": "Immediate",
+        "department": "Gastroenterology"
+    },
+    "Hepatitis C": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver infections and digestive conditions.",
+        "icon": "stomach",
+        "priority": "Immediate",
+        "department": "Gastroenterology"
+    },
+    "Hepatitis D": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver infections and digestive conditions.",
+        "icon": "stomach",
+        "priority": "Immediate",
+        "department": "Gastroenterology"
+    },
+    "Hepatitis E": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver infections and digestive conditions.",
+        "icon": "stomach",
+        "priority": "Soon",
+        "department": "Gastroenterology"
+    },
+    "Alcoholic Hepatitis": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in liver conditions and digestive health.",
+        "icon": "stomach",
+        "priority": "Immediate",
+        "department": "Gastroenterology"
+    },
+    "Gerd": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in digestive and acid reflux conditions.",
+        "icon": "stomach",
+        "priority": "Routine",
+        "department": "Gastroenterology"
+    },
+    "Gastroenteritis": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in digestive and stomach conditions.",
+        "icon": "stomach",
+        "priority": "Soon",
+        "department": "Gastroenterology"
+    },
+    "Peptic Ulcer Diseae": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in digestive and stomach conditions.",
+        "icon": "stomach",
+        "priority": "Soon",
+        "department": "Gastroenterology"
+    },
+    "Dimorphic Hemmorhoids(Piles)": {
+        "name": "Gastroenterologist",
+        "description": "Specialist in digestive and colorectal conditions.",
+        "icon": "stomach",
+        "priority": "Routine",
+        "department": "Gastroenterology"
+    },
+
+    # Endocrine / Metabolic
+    "Diabetes": {
+        "name": "Endocrinologist",
+        "description": "Specialist in hormone and metabolic conditions including diabetes.",
+        "icon": "metabolism",
+        "priority": "Soon",
+        "department": "Endocrinology"
+    },
+    "Diabetes ": {
+        "name": "Endocrinologist",
+        "description": "Specialist in hormone and metabolic conditions including diabetes.",
+        "icon": "metabolism",
+        "priority": "Soon",
+        "department": "Endocrinology"
+    },
+    "Hypothyroidism": {
+        "name": "Endocrinologist",
+        "description": "Specialist in thyroid and hormone conditions.",
+        "icon": "metabolism",
+        "priority": "Routine",
+        "department": "Endocrinology"
+    },
+    "Hyperthyroidism": {
+        "name": "Endocrinologist",
+        "description": "Specialist in thyroid and hormone conditions.",
+        "icon": "metabolism",
+        "priority": "Soon",
+        "department": "Endocrinology"
+    },
+    "Hypoglycemia": {
+        "name": "Endocrinologist",
+        "description": "Specialist in blood sugar and metabolic conditions.",
+        "icon": "metabolism",
+        "priority": "Immediate",
+        "department": "Endocrinology"
+    },
+
+    # Infectious / General
+    "Dengue": {
+        "name": "General Physician",
+        "description": "A general physician manages dengue and common infections.",
+        "icon": "virus",
+        "priority": "Immediate",
+        "department": "General Medicine"
+    },
+    "Malaria": {
+        "name": "General Physician",
+        "description": "A general physician manages malaria and tropical infections.",
+        "icon": "virus",
+        "priority": "Immediate",
+        "department": "General Medicine"
+    },
+    "Typhoid": {
+        "name": "General Physician",
+        "description": "A general physician manages typhoid and bacterial infections.",
+        "icon": "virus",
+        "priority": "Soon",
+        "department": "General Medicine"
+    },
+    "Aids": {
+        "name": "Infectious Disease Specialist",
+        "description": "Specialist in HIV/AIDS and immune system conditions.",
+        "icon": "immune",
+        "priority": "Immediate",
+        "department": "Infectious Diseases"
+    },
+    "Drug Reaction": {
+        "name": "General Physician",
+        "description": "A general physician manages drug reactions and medication issues.",
+        "icon": "general",
+        "priority": "Immediate",
+        "department": "General Medicine"
+    },
+    "Chicken Pox": {
+        "name": "General Physician",
+        "description": "A general physician manages chickenpox and viral infections.",
+        "icon": "virus",
+        "priority": "Routine",
+        "department": "General Medicine"
+    },
+
+    # Skin
+    "Fungal Infection": {
+        "name": "Dermatologist",
+        "description": "Specialist in skin, nail, and fungal conditions.",
+        "icon": "skin",
+        "priority": "Routine",
+        "department": "Dermatology"
+    },
+    "Psoriasis": {
+        "name": "Dermatologist",
+        "description": "Specialist in chronic skin conditions.",
+        "icon": "skin",
+        "priority": "Routine",
+        "department": "Dermatology"
+    },
+    "Impetigo": {
+        "name": "Dermatologist",
+        "description": "Specialist in skin infections.",
+        "icon": "skin",
+        "priority": "Soon",
+        "department": "Dermatology"
+    },
+    "Acne": {
+        "name": "Dermatologist",
+        "description": "Specialist in skin conditions and acne treatment.",
+        "icon": "skin",
+        "priority": "Routine",
+        "department": "Dermatology"
+    },
+
+    # Musculoskeletal
+    "Arthritis": {
+        "name": "Rheumatologist",
+        "description": "Specialist in joint and autoimmune conditions.",
+        "icon": "bone",
+        "priority": "Soon",
+        "department": "Rheumatology"
+    },
+    "Osteoarthristis": {
+        "name": "Orthopedic Surgeon",
+        "description": "Specialist in bone and joint conditions.",
+        "icon": "bone",
+        "priority": "Routine",
+        "department": "Orthopedics"
+    },
+
+    # Urinary
+    "Urinary Tract Infection": {
+        "name": "Urologist",
+        "description": "Specialist in urinary tract and kidney conditions.",
+        "icon": "kidney",
+        "priority": "Soon",
+        "department": "Urology"
+    },
+}
+
+DEFAULT_SPECIALIST = {
+    "name": "General Physician",
+    "description": "A general physician can assess your condition and refer you to the right specialist.",
+    "icon": "general",
+    "priority": "Routine",
+    "department": "General Medicine"
+}
+
+# ---------------------------------------------------------------------------
 # File Paths
 # ---------------------------------------------------------------------------
 _BASE_PATH = os.path.dirname(__file__)
@@ -464,7 +797,8 @@ def _conclude_triage(
             "recommended_action": recommended_action,
             "matched_symptoms": ranked_symptom_names,
             "alternatives": alternatives_list,
-            "advice": advice_list
+            "advice": advice_list,
+            "specialist": SPECIALIST_MAP.get(top_disease.title(), DEFAULT_SPECIALIST),
         }
     )
     
