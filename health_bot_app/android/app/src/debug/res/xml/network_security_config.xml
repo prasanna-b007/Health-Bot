@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only network policy.
+
+  Allows plain HTTP to development hosts so `flutter run` works against a Rasa
+  server on the developer's machine. This file is part of the debug source set
+  and is never included in a release build.
+
+  Add your machine's LAN IP here when testing on a physical device.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Lets a proxy such as mitmproxy inspect debug traffic. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Android emulator's alias for the host machine -->
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <!-- Common private LAN ranges, for testing on a physical device -->
+        <domain includeSubdomains="true">192.168.1.1</domain>
+        <domain includeSubdomains="true">192.168.137.1</domain>
+    </domain-config>
+</network-security-config>

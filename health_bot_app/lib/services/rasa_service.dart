@@ -1,27 +1,41 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+
 import 'package:http/http.dart' as http;
+
+import '../config/app_config.dart';
 
 /// Low-level HTTP client for the Rasa REST webhook.
 ///
 /// Handles session ID generation, message sending, and JSON parsing.
-/// All platform-specific base URL logic lives here.
 class RasaService {
-  /// Default: Android emulator loopback.
-  /// Change to your machine's LAN IP for physical devices,
-  static String baseUrl = 'http://10.20.24.51:5005';
-
-  late String _senderId;
-
-  RasaService() {
+  RasaService({http.Client? client}) : _client = client ?? http.Client() {
     _senderId = _generateSenderId();
   }
 
+  final http.Client _client;
+  late String _senderId;
+
+  /// Backend host. Configured at build time so no machine-specific address is
+  /// committed — see AppConfig and the README.
+  static String get baseUrl => AppConfig.rasaBaseUrl;
+
   String get senderId => _senderId;
-  /// Generate a unique sender ID per session.
+
+  /// A fresh conversation id.
+  ///
+  /// [Random.secure] rather than [Random]: the sender id is the only thing
+  /// separating one user's triage session from another's on the server, and
+  /// the default generator is seeded predictably enough that two devices
+  /// starting together can collide — which would splice two people's symptoms
+  /// into one conversation.
   static String _generateSenderId() {
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final rand = Random().nextInt(99999);
+    // Bound written as a literal, not `1 << 32`: dart2js constant-folds that
+    // shift to 0 on web, and nextInt(0) throws RangeError. The VM evaluates it
+    // as 2^32 and works, so the shift form fails only in the browser.
+    final rand = Random.secure().nextInt(0x100000000);
     return 'flutter_${ts}_$rand';
   }
 
@@ -32,43 +46,86 @@ class RasaService {
 
   /// Send a message to Rasa and return the list of bot responses.
   ///
-  /// [message]  — the user's text (e.g. "I have fever and headache").
-  /// [metadata] — optional map sent once with the first message
-  ///              (age, duration, severity from the assessment screen).
+  /// [metadata] carries age/duration/severity from the assessment screen so
+  /// the backend can skip asking for them.
+  ///
+  /// Throws [RasaException]; the `kind` distinguishes a genuine connectivity
+  /// problem from a malformed response, which the UI previously reported
+  /// identically as "could not connect".
   Future<List<RasaResponse>> sendMessage(
     String message, {
     Map<String, dynamic>? metadata,
   }) async {
-    final uri = Uri.parse('$baseUrl/webhooks/rest/webhook');
-
+    // Rasa's --auth-token is checked as a `token` query parameter.
+    final uri = Uri.parse('$baseUrl/webhooks/rest/webhook').replace(
+      queryParameters: AppConfig.hasRasaAuthToken
+          ? {'token': AppConfig.rasaAuthToken}
+          : null,
+    );
     final body = <String, dynamic>{
       'sender': _senderId,
       'message': message,
+      if (metadata != null && metadata.isNotEmpty) 'metadata': metadata,
     };
-    if (metadata != null && metadata.isNotEmpty) {
-      body['metadata'] = metadata;
+
+    final http.Response response;
+    try {
+      response = await _client
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.requestTimeout);
+    } on SocketException catch (e) {
+      throw RasaException(
+        'Could not reach the health server.',
+        kind: RasaErrorKind.network,
+        cause: e,
+      );
+    } catch (e) {
+      throw RasaException(
+        'Could not reach the health server.',
+        kind: RasaErrorKind.network,
+        cause: e,
+      );
     }
 
-    final response = await http
-        .post(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 30));
-
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data
-          .map((item) => RasaResponse.fromJson(item as Map<String, dynamic>))
-          .toList();
-    } else {
+    if (response.statusCode == 401 || response.statusCode == 403) {
       throw RasaException(
-        'Rasa returned status ${response.statusCode}',
+        'This app is not authorised to reach the health server.',
+        kind: RasaErrorKind.unauthorized,
         statusCode: response.statusCode,
       );
     }
+
+    if (response.statusCode != 200) {
+      throw RasaException(
+        'The health server returned an error (${response.statusCode}).',
+        kind: RasaErrorKind.server,
+        statusCode: response.statusCode,
+      );
+    }
+
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List) {
+        throw const FormatException('expected a JSON array of messages');
+      }
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(RasaResponse.fromJson)
+          .toList();
+    } catch (e) {
+      throw RasaException(
+        'The health server sent an unreadable response.',
+        kind: RasaErrorKind.parse,
+        cause: e,
+      );
+    }
   }
+
+  void dispose() => _client.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -79,11 +136,11 @@ class RasaService {
 ///
 /// The `custom` field maps to `json_message` set in the Rasa action server.
 class RasaResponse {
+  RasaResponse({this.recipientId, this.text, this.custom});
+
   final String? recipientId;
   final String? text;
   final Map<String, dynamic>? custom;
-
-  RasaResponse({this.recipientId, this.text, this.custom});
 
   factory RasaResponse.fromJson(Map<String, dynamic> json) {
     return RasaResponse(
@@ -93,27 +150,54 @@ class RasaResponse {
     );
   }
 
-  // --- Convenience getters for structured responses ---
+  String? get type => custom?['type'] as String?;
 
-  bool get isEmergency => custom?['emergency'] == true;
+  bool get isEmergency => custom?['emergency'] == true || type == 'emergency';
 
-  bool get isResult => custom?['type'] == 'result';
+  /// Which kind of red flag this is: "emergency" or "crisis".
+  ///
+  /// A medical emergency and a disclosed suicidal thought both stop triage,
+  /// but they need opposite responses — a map of hospitals is the right answer
+  /// to one and the wrong answer to the other. Absent on older backends, which
+  /// default to the medical reading.
+  String get redFlagCategory => (custom?['category'] as String?) ?? 'emergency';
 
-  bool get isQuestion => custom?['type'] == 'question';
+  bool get isCrisis => custom?['crisis'] == true || redFlagCategory == 'crisis';
+
+  bool get isResult => type == 'result';
+
+  bool get isQuestion => type == 'question';
+
+  /// The backend asks the app to run its own nearby-hospital search.
+  bool get isHospitalRequest => type == 'hospitals';
+
+  /// The backend could not understand the symptoms and wants a rephrase.
+  bool get isClarification => type == 'clarification';
 
   String get inputType => (custom?['input_type'] as String?) ?? 'yes_no';
 
-  int get questionNumber => (custom?['question_number'] as int?) ?? 1;
+  int get questionNumber => (custom?['question_number'] as num?)?.toInt() ?? 1;
 }
 
 // ---------------------------------------------------------------------------
 // Exception
 // ---------------------------------------------------------------------------
 
+enum RasaErrorKind { network, server, parse, unauthorized }
+
 class RasaException implements Exception {
+  RasaException(
+    this.message, {
+    required this.kind,
+    this.statusCode,
+    this.cause,
+  });
+
   final String message;
+  final RasaErrorKind kind;
   final int? statusCode;
-  RasaException(this.message, {this.statusCode});
+  final Object? cause;
+
   @override
-  String toString() => 'RasaException: $message';
+  String toString() => 'RasaException($kind): $message';
 }

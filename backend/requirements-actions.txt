@@ -1,0 +1,6 @@
+# Dependencies for the action server only.
+#
+# The triage engine is plain Python and the Rasa adapter needs just the SDK,
+# so this image does not pull TensorFlow -- it is roughly 100 MB instead of
+# 2 GB, and starts in seconds.
+rasa-sdk==3.6.2

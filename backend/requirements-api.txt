@@ -1,0 +1,9 @@
+# The stateless triage API (api/main.py).
+#
+# Deliberately short. This service runs the same engine as the Rasa action
+# server without any of Rasa's weight: no TensorFlow, no model artefacts, no
+# Python <= 3.10 pin. Installed size is tens of megabytes against roughly two
+# gigabytes, and the process starts in about a second rather than ninety.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6

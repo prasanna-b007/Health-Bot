@@ -1,0 +1,9 @@
+# Development and CI dependencies. The action server itself needs only
+# rasa / rasa-sdk (see the Rasa install instructions in README.md).
+# pytest 8+ pulls a packaging release that breaks rasa 3.6 (packaging<21.0)
+pytest>=7.4,<8
+requests>=2.31
+# The evaluation suite reads tests/vignettes.yml. Rasa pulls PyYAML in
+# anyway, but the engine tests deliberately run without Rasa installed, so
+# the dependency has to be declared here or CI loses the whole harness.
+PyYAML>=6.0

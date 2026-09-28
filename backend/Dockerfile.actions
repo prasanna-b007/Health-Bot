@@ -1,0 +1,59 @@
+# Rasa action server: the triage engine.
+#
+# Installs rasa-sdk only, not rasa. The engine modules import no Rasa and the
+# adapter needs just the SDK, so this image skips the TensorFlow stack — a few
+# hundred MB instead of ~2 GB, and it starts in seconds rather than a minute.
+# That separation is the practical payoff of keeping triage logic Rasa-free.
+#
+#   docker build -t healthbot-actions -f Dockerfile.actions .
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-actions.txt .
+# Retry the whole install: a download can complete but arrive corrupted, which
+# fails hash verification and is not something pip's own --retries recovers
+# from. CI builds this image on every pull request.
+RUN for attempt in 1 2 3; do \
+        echo "pip install attempt $attempt"; \
+        pip install -r requirements-actions.txt && break; \
+        if [ "$attempt" = "3" ]; then \
+            echo "pip install failed after 3 attempts" >&2; exit 1; \
+        fi; \
+        sleep 15; \
+    done
+
+RUN useradd --create-home --uid 10001 actions
+
+COPY actions ./actions
+COPY datasets ./datasets
+
+# Fail the build if the knowledge base cannot load or the actions cannot
+# register. Both are import-time checks, so a malformed CSV or a broken action
+# class is caught here rather than at the first user message in production.
+RUN python -c "\
+from rasa_sdk.executor import ActionExecutor; \
+e = ActionExecutor(); e.register_package('actions'); \
+assert len(e.actions) == 10, e.actions; \
+print('actions registered:', sorted(e.actions))"
+
+RUN chown -R actions:actions /app
+USER actions
+
+EXPOSE 5055
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://localhost:5055/health || exit 1
+
+CMD ["python", "-m", "rasa_sdk", "--actions", "actions", "--port", "5055"]

@@ -28,13 +28,6 @@ slots:
       - type: from_entity
         entity: disease
 
-  # List of diseases still in the running
-  candidate_diseases:
-    type: list
-    influence_conversation: false
-    mappings:
-      - type: custom
-
   # All symptoms already mentioned or asked (never re-asked)
   asked_symptoms:
     type: list
@@ -51,6 +44,14 @@ slots:
 
   # Symptoms the user has positively confirmed
   confirmed_symptoms:
+    type: list
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  # Symptoms the user has explicitly ruled out. Fed to the scorer as negative
+  # evidence, which is what makes answering "no" change the result.
+  denied_symptoms:
     type: list
     influence_conversation: false
     mappings:
@@ -84,6 +85,15 @@ slots:
     mappings:
       - type: custom
 
+  # Ongoing conditions from the app's stored health profile. Sent as message
+  # metadata with the opening symptom description, never asked for in
+  # conversation, and used only to modify risk scoring (see comorbidity.py).
+  chronic_conditions:
+    type: list
+    influence_conversation: false
+    mappings:
+      - type: custom
+
   duration_days:
     type: any
     influence_conversation: false
@@ -105,6 +115,23 @@ slots:
   emergency_detected:
     type: bool
     influence_conversation: true
+    mappings:
+      - type: custom
+
+  # Which red flag fired, so the escalation screen can say why
+  emergency_reason:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: custom
+
+  # Which kind of red flag was detected: "emergency" or "crisis". A medical
+  # emergency and a disclosed suicidal thought both stop triage, but they call
+  # for completely different responses, and the escalation action reads this
+  # slot to decide which one to send. See emergency.py.
+  red_flag_category:
+    type: text
+    influence_conversation: false
     mappings:
       - type: custom
 

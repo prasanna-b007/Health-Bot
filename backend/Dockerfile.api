@@ -1,0 +1,38 @@
+# The stateless triage API.
+#
+# Contrast with Dockerfile (Rasa server, model baked in) and Dockerfile.actions
+# (the action server). This image carries the engine, the CSV knowledge base
+# and FastAPI -- nothing else -- so it builds in seconds and starts in about
+# one, against the Rasa image's several minutes and ninety-second start period.
+FROM python:3.12-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-api.txt ./
+RUN pip install --no-cache-dir -r requirements-api.txt
+
+COPY actions/ ./actions/
+COPY api/ ./api/
+COPY datasets/ ./datasets/
+
+# Fail the build rather than the first request if the knowledge base is
+# malformed: the same guarantee Dockerfile.actions gives.
+RUN python -c "from actions.datastore import load; kb = load(); assert kb.disease_symptoms"
+
+# Never root.
+RUN useradd --create-home --uid 10001 healthbot
+USER healthbot
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

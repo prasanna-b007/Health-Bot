@@ -1,0 +1,17 @@
+# Never ship the local virtualenv, caches, or model archives -- the image
+# trains its own model and installs its own dependencies.
+venv/
+rasa_env/
+.rasa/
+models/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+results/
+*.md
+Dockerfile*
+.dockerignore
+requirements-dev.txt
+pytest.ini
+update_weights.py

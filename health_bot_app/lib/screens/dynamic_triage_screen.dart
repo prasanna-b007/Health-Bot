@@ -1,29 +1,35 @@
 import 'package:flutter/material.dart';
+
 import '../models/assessment_data.dart';
+import '../motion/pressable.dart';
 import '../services/api_service.dart';
+import '../theme/app_theme.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
-import '../theme/app_theme.dart';
+import '../widgets/app_button.dart';
+import '../widgets/ui.dart';
+import '../widgets/stage_tracker.dart';
+import 'crisis_screen.dart';
 import 'hospital_finder_screen.dart';
 import 'results_screen.dart';
 
-import '../widgets/stage_tracker.dart';
-
-/// Wizard-style smart medical interview screen.
+/// The adaptive medical interview: one question at a time.
 ///
-/// One question per screen with crossfade transitions, Yes/No/Unsure buttons,
-/// expandable "Why are we asking?" reason, and a Previous button for navigation.
+/// One question per screen is the whole design. The backend picks what to ask
+/// next from what has been answered, so there is no form to scroll and no way
+/// to skip ahead — and that constraint is what lets the question itself be set
+/// large enough to read at arm's length while unwell.
 class DynamicTriageScreen extends StatefulWidget {
-  final AssessmentData data;
-  final ApiService apiService;
-  final TriageQuestion currentQuestion;
-
   const DynamicTriageScreen({
     super.key,
     required this.data,
     required this.apiService,
     required this.currentQuestion,
   });
+
+  final AssessmentData data;
+  final ApiService apiService;
+  final TriageQuestion currentQuestion;
 
   @override
   State<DynamicTriageScreen> createState() => _DynamicTriageScreenState();
@@ -34,9 +40,8 @@ class _DynamicTriageScreenState extends State<DynamicTriageScreen> {
   late TriageQuestion _question;
   bool _reasonExpanded = false;
 
-  /// Client-side history stack for the Previous button.
-  /// Stores each question/answer pair so we can navigate back
-  /// without re-querying the backend.
+  /// Client-side history stack for the Previous button, so stepping back does
+  /// not have to re-query the backend.
   final List<QuestionAnswer> _history = [];
 
   @override
@@ -45,41 +50,44 @@ class _DynamicTriageScreenState extends State<DynamicTriageScreen> {
     _question = widget.currentQuestion;
   }
 
-  /// Strips all markdown bold markers (**) from text.
-  String _cleanMarkdown(String text) {
-    return text.replaceAll('**', '');
-  }
+  String _cleanMarkdown(String text) => text.replaceAll('**', '');
 
-  /// Attempts to extract a symptom keyword from the question text.
-  /// Returns (prefix, keyword, suffix) where keyword is the emphasized part.
-  /// Falls back to (fullText, '', '') if no keyword can be extracted.
+  /// Splits a question into its lead-in and the symptom being asked about, so
+  /// the symptom can be set large and the scaffolding small.
+  ///
+  /// Falls back to the whole sentence when no keyword can be found — an
+  /// unusual phrasing must still render as a readable question.
   (String, String, String) _splitQuestionText(String rawText) {
     final text = _cleanMarkdown(rawText);
 
-    // Pattern 1: "...do you have XYZ?" or "...do you experience XYZ?"
-    final doYouPattern = RegExp(
+    final doYou = RegExp(
       r'(.+?(?:do you (?:have|experience|notice|feel|see|get)\s+))(.+?)([?.]?)\s*$',
       caseSensitive: false,
-    );
-    final m1 = doYouPattern.firstMatch(text);
-    if (m1 != null) {
-      return (m1.group(1)!.trim(), m1.group(2)!.trim(), m1.group(3) ?? '');
+    ).firstMatch(text);
+    if (doYou != null) {
+      return (
+        doYou.group(1)!.trim(),
+        doYou.group(2)!.trim(),
+        doYou.group(3) ?? '',
+      );
     }
 
-    // Pattern 2: "Have you experienced XYZ?"
-    final haveYouPattern = RegExp(
+    final haveYou = RegExp(
       r'(.+?(?:(?:Have|Has|Are|Is|Do|Does|Did|Were|Was) you \w+\s+))(.+?)([?.]?)\s*$',
       caseSensitive: false,
-    );
-    final m2 = haveYouPattern.firstMatch(text);
-    if (m2 != null) {
-      return (m2.group(1)!.trim(), m2.group(2)!.trim(), m2.group(3) ?? '');
+    ).firstMatch(text);
+    if (haveYou != null) {
+      return (
+        haveYou.group(1)!.trim(),
+        haveYou.group(2)!.trim(),
+        haveYou.group(3) ?? '',
+      );
     }
 
     return (text, '', '');
   }
 
-  void _onAnswer(AnswerType answer) async {
+  Future<void> _onAnswer(AnswerType answer) async {
     setState(() => _isLoading = true);
 
     final response = await widget.apiService.answerQuestion(answer);
@@ -93,13 +101,19 @@ class _DynamicTriageScreenState extends State<DynamicTriageScreen> {
     }
 
     if (response.isEmergency) {
+      // A crisis disclosure and a medical emergency both stop triage here,
+      // but they part ways at the destination: a crisis line versus the
+      // nearest emergency department.
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => HospitalFinderScreen(
-            apiService: widget.apiService,
-            emergencyReason: response.emergencyReason ?? 'Emergency symptoms detected.',
-          ),
+          pageBuilder: (_, _, _) => response.isCrisis
+              ? const CrisisScreen()
+              : HospitalFinderScreen(
+                  emergencyReason:
+                      response.emergencyReason ??
+                      'Emergency symptoms detected.',
+                ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
         ),
@@ -111,18 +125,14 @@ class _DynamicTriageScreenState extends State<DynamicTriageScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => ResultsScreen(
-            data: widget.data,
-            result: response.result!,
-            apiService: widget.apiService,
-          ),
+          builder: (_) =>
+              ResultsScreen(data: widget.data, result: response.result!),
         ),
       );
       return;
     }
 
     if (response.nextQuestion != null) {
-      // Push current question + answer into history before moving forward
       _history.add(QuestionAnswer(question: _question, answer: answer));
       setState(() {
         _question = response.nextQuestion!;
@@ -141,261 +151,269 @@ class _DynamicTriageScreenState extends State<DynamicTriageScreen> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.riskHigh,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
+    final total = _question.estimatedTotal <= 0 ? 1 : _question.estimatedTotal;
+    final progress = (_question.questionNumber / total).clamp(0.0, 1.0);
+
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: AppColors.primary),
-        title: Text('Smart Medical Interview', style: AppText.h3),
-        centerTitle: true,
-        leading: _history.isNotEmpty
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios, size: 20),
-                onPressed: _onPrevious,
-              )
-            : IconButton(
-                icon: const Icon(Icons.close, size: 20),
-                onPressed: () => Navigator.of(context).pop(),
+      body: Column(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: AppTopBar(
+              title: 'Interview',
+              leading: AppIconButton(
+                icon: _history.isNotEmpty
+                    ? Icons.arrow_back_rounded
+                    : Icons.close_rounded,
+                tooltip: _history.isNotEmpty ? 'Previous question' : 'Exit',
+                onTap: _history.isNotEmpty
+                    ? _onPrevious
+                    : () => Navigator.of(context).pop(),
               ),
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppTheme.spacing24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const StageTracker(currentStage: TriageStage.assessment),
-              const SizedBox(height: AppTheme.spacing24),
-
-              // ── Question text (with keyword emphasis) ──
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeOut,
-                transitionBuilder: (Widget child, Animation<double> animation) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-                child: Column(
-                  key: ValueKey<String>('q_${_question.questionNumber}_${_question.text.hashCode}'),
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Builder(
-                      builder: (context) {
-                        final (prefix, keyword, suffix) = _splitQuestionText(_question.text);
-                        if (keyword.isEmpty) {
-                          // No keyword extracted — show plain cleaned text
-                          return Text(
-                            prefix,
-                            style: AppText.body.copyWith(fontSize: 18, height: 1.5, color: AppColors.subtext),
-                            textAlign: TextAlign.left,
-                          );
-                        }
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              prefix,
-                              style: AppText.body.copyWith(fontSize: 18, height: 1.5, color: AppColors.subtext),
-                              textAlign: TextAlign.left,
-                            ),
-                            const SizedBox(height: AppTheme.spacing8),
-                            Text(
-                              '$keyword$suffix',
-                              style: AppText.h1.copyWith(fontSize: 28, height: 1.3),
-                              textAlign: TextAlign.left,
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: AppTheme.spacing8),
-                    Text(
-                      'Question ${_question.questionNumber} of ~${_question.estimatedTotal}',
-                      style: AppText.dataLabel,
-                    ),
-                  ],
-                ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.gutter,
+              AppTheme.space20,
+              AppTheme.gutter,
+              AppTheme.space4,
+            ),
+            // The interview's own progress fills the middle segment, and the
+            // count is spelled out underneath. "About", because the backend
+            // may ask more or fewer than it estimated — a bare percentage
+            // would read as a promise.
+            child: StageTracker(
+              currentStage: TriageStage.assessment,
+              stageProgress: progress,
+              note: 'Question ${_question.questionNumber} of about $total',
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.gutter,
+                AppTheme.space24,
+                AppTheme.gutter,
+                AppTheme.space24,
               ),
-
-              const SizedBox(height: AppTheme.spacing16),
-
-              // ── "Why are we asking?" — prominent card toggle ──
-              if (_question.reason.isNotEmpty) ...[
-                GestureDetector(
-                  onTap: () => setState(() => _reasonExpanded = !_reasonExpanded),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppTheme.spacing16,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _reasonExpanded
-                          ? AppColors.secondary.withValues(alpha: 0.06)
-                          : AppColors.card,
-                      borderRadius: _reasonExpanded
-                          ? const BorderRadius.vertical(top: Radius.circular(14))
-                          : BorderRadius.circular(14),
-                      border: Border.all(
-                        color: _reasonExpanded
-                            ? AppColors.secondary.withValues(alpha: 0.25)
-                            : AppColors.border,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline_rounded,
-                          size: 18,
-                          color: _reasonExpanded ? AppColors.secondary : AppColors.subtext,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Why are we asking?',
-                            style: AppText.body.copyWith(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: _reasonExpanded ? AppColors.secondary : AppColors.subtext,
-                            ),
-                          ),
-                        ),
-                        AnimatedRotation(
-                          turns: _reasonExpanded ? 0.5 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          child: Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            size: 20,
-                            color: _reasonExpanded ? AppColors.secondary : AppColors.subtext,
-                          ),
-                        ),
-                      ],
+              children: [
+                AnimatedSwitcher(
+                  duration: AppTheme.medium,
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeIn,
+                  // The new question rises as it fades in, echoing the
+                  // direction of moving forward through the interview.
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.05),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
                     ),
                   ),
-                ),
-                AnimatedCrossFade(
-                  firstChild: const SizedBox.shrink(),
-                  secondChild: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(AppTheme.spacing16),
-                    decoration: BoxDecoration(
-                      color: AppColors.secondary.withValues(alpha: 0.04),
-                      borderRadius: const BorderRadius.vertical(
-                        bottom: Radius.circular(14),
-                      ),
-                      border: Border(
-                        left: BorderSide(color: AppColors.secondary.withValues(alpha: 0.25)),
-                        right: BorderSide(color: AppColors.secondary.withValues(alpha: 0.25)),
-                        bottom: BorderSide(color: AppColors.secondary.withValues(alpha: 0.25)),
-                      ),
+                  child: _QuestionText(
+                    key: ValueKey(
+                      'q${_question.questionNumber}_${_question.text.hashCode}',
                     ),
-                    child: Text(
-                      _cleanMarkdown(_question.reason),
-                      style: AppText.body.copyWith(fontSize: 14, height: 1.6, color: AppColors.text),
-                    ),
+                    parts: _splitQuestionText(_question.text),
                   ),
-                  crossFadeState: _reasonExpanded
-                      ? CrossFadeState.showSecond
-                      : CrossFadeState.showFirst,
-                  duration: const Duration(milliseconds: 200),
                 ),
-              ],
 
-              const SizedBox(height: AppTheme.spacing32),
+                if (_question.reason.isNotEmpty) ...[
+                  const SizedBox(height: AppTheme.space24),
+                  _WhyCard(
+                    reason: _cleanMarkdown(_question.reason),
+                    expanded: _reasonExpanded,
+                    onToggle: () =>
+                        setState(() => _reasonExpanded = !_reasonExpanded),
+                  ),
+                ],
 
-              // ── Answer buttons ──
-              if (_isLoading)
-                const Center(
-                  child: CircularProgressIndicator(color: AppColors.primary),
-                )
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Yes button
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
+                const SizedBox(height: AppTheme.space40),
+
+                if (_isLoading)
+                  const _Thinking()
+                else
+                  Column(
+                    children: [
+                      AppButton(
+                        label: 'Yes',
+                        icon: Icons.check_rounded,
+                        accent: AppColors.signal,
+                        haptic: PressHaptic.selection,
                         onPressed: () => _onAnswer(AnswerType.yes),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.border, width: 1.5),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: AppTheme.spacing16),
-                        ),
-                        child: Text(
-                          'Yes',
-                          style: AppText.body.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
                       ),
-                    ),
-                    const SizedBox(height: AppTheme.spacing8),
+                      const SizedBox(height: AppTheme.space8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: AppButton(
+                              label: 'No',
+                              variant: AppButtonVariant.secondary,
+                              accent: AppColors.textMuted,
+                              haptic: PressHaptic.selection,
+                              onPressed: () => _onAnswer(AnswerType.no),
+                            ),
+                          ),
+                          const SizedBox(width: AppTheme.space8),
+                          Expanded(
+                            child: AppButton(
+                              label: 'Not sure',
+                              variant: AppButtonVariant.secondary,
+                              accent: AppColors.riskModerate,
+                              haptic: PressHaptic.selection,
+                              onPressed: () => _onAnswer(AnswerType.unsure),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-                    // No button
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        onPressed: () => _onAnswer(AnswerType.no),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.border, width: 1.5),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: AppTheme.spacing16),
-                        ),
-                        child: Text(
-                          'No',
-                          style: AppText.body.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: AppTheme.spacing8),
+class _QuestionText extends StatelessWidget {
+  const _QuestionText({super.key, required this.parts});
 
-                    // I'm Not Sure button
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        onPressed: () => _onAnswer(AnswerType.unsure),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.border, width: 1.5),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(AppTheme.radiusButton),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: AppTheme.spacing16),
-                        ),
-                        child: Text(
-                          "I'm Not Sure",
-                          style: AppText.body.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+  final (String, String, String) parts;
+
+  @override
+  Widget build(BuildContext context) {
+    final (prefix, keyword, suffix) = parts;
+
+    if (keyword.isEmpty) {
+      return SizedBox(
+        width: double.infinity,
+        child: Text(prefix, style: AppText.h1),
+      );
+    }
+
+    return Column(
+      // Stretch, not start: the AnimatedSwitcher above lays its children out
+      // in a Stack, which shrink-wraps this column and then centres it — so a
+      // left-aligned question ends up floating off the page gutter.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(prefix, style: AppText.bodyMuted),
+        const SizedBox(height: AppTheme.space8),
+        // The symptom itself, set large — the one thing on screen the user
+        // actually has to judge.
+        Text('$keyword$suffix', style: AppText.display),
+      ],
+    );
+  }
+}
+
+/// "Why are we asking?" — collapsed by default, because most people want to
+/// answer and move on, and expandable because the ones who do not want a
+/// reason want it right now.
+class _WhyCard extends StatelessWidget {
+  const _WhyCard({
+    required this.reason,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String reason;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      accent: expanded ? AppColors.pulse : null,
+      onTap: onToggle,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTheme.space20,
+        vertical: AppTheme.space16,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.help_outline_rounded,
+                size: 17,
+                color: expanded ? AppColors.pulse : AppColors.textFaint,
+              ),
+              const SizedBox(width: AppTheme.space12),
+              Expanded(
+                child: Text(
+                  'Why we ask',
+                  style: AppText.label.copyWith(
+                    color: expanded ? AppColors.pulse : AppColors.textMuted,
+                  ),
                 ),
-              const SizedBox(height: AppTheme.spacing24),
+              ),
+              AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration: AppTheme.quick,
+                child: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 20,
+                  color: expanded ? AppColors.pulse : AppColors.textFaint,
+                ),
+              ),
             ],
           ),
-        ),
+          AnimatedCrossFade(
+            duration: AppTheme.quick,
+            crossFadeState: expanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: Padding(
+              padding: const EdgeInsets.only(top: AppTheme.space12),
+              child: Text(reason, style: AppText.bodySm),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The waiting state between answering and the next question.
+///
+/// It occupies the height the answer buttons had, so the page does not jump
+/// when the answer is sent and again when the next question lands.
+class _Thinking extends StatelessWidget {
+  const _Thinking();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 104,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 120,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: const LinearProgressIndicator(minHeight: 3),
+            ),
+          ),
+          const SizedBox(height: AppTheme.space12),
+          Text('Reading your answer', style: AppText.bodySm),
+        ],
       ),
     );
   }

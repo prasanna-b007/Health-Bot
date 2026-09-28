@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher label. Was "health_bot_app", the raw Flutter project name. -->
+    <string name="app_name">Health-Bot</string>
+</resources>

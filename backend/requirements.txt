@@ -1,0 +1,11 @@
+# Runtime dependencies for the Rasa server and the action server.
+#
+# Rasa 3.6 requires Python 3.8-3.10 and pins many transitive packages tightly
+# (notably packaging<21.0). Install into a clean virtualenv on Python 3.10.
+#
+#   pip install -r requirements.txt
+#
+# The action server alone needs only rasa-sdk; see Dockerfile.actions, which
+# installs that single package and skips the TensorFlow stack entirely.
+rasa==3.6.21
+rasa-sdk==3.6.2

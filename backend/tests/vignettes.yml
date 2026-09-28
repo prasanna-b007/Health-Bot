@@ -1,0 +1,381 @@
+# Evaluation vignettes for the triage engine.
+#
+# WHAT THIS IS
+# ------------
+# Each entry is a presentation written the way a person might actually type
+# it, together with what the engine ought to conclude. tests/test_evaluation.py
+# replays every one through the real engine -- free-text extraction, intake,
+# follow-up questions, scoring, risk, disposition -- and reports accuracy,
+# emergency recall and how many questions each assessment took.
+#
+# WHAT THIS IS NOT
+# ----------------
+# Clinical validation. These vignettes were written against the same 41-
+# condition knowledge base the engine scores from, by someone who is not a
+# clinician, so a perfect score here means the engine behaves consistently
+# with its own data -- not that it is right about medicine. What the suite is
+# genuinely good for is catching the thing unit tests cannot: a change to
+# scoring, priors or question selection that quietly makes real presentations
+# worse. Treat the numbers as a regression baseline, and read DATA.md before
+# quoting them anywhere.
+#
+# FIELDS
+# ------
+#   id             unique, kebab-case
+#   text           what the user types first
+#   symptoms       everything this patient actually has, canonical names. The
+#                  simulated user answers follow-up questions from this list,
+#                  so it must be complete -- anything absent is answered "no".
+#   age / duration_days / severity   intake values sent as metadata
+#   expect_condition   canonical name the ranking should lead with (optional)
+#   expect_top3        canonical names, at least one of which should appear in
+#                      the top three (optional; use when several conditions are
+#                      genuinely indistinguishable from the symptoms given)
+#   expect_disposition emergency | urgent_today | see_doctor_soon | self_care
+#   expect_emergency   true when the red-flag path must fire before triage
+#   expect_crisis      true when the mental-health crisis path must fire
+#   expect_unspecified true when the engine should decline to name a condition
+
+# ---------------------------------------------------------------------------
+# Red flags: these must never reach the ranker at all.
+# ---------------------------------------------------------------------------
+- id: emergency-chest-pain
+  text: "I have crushing chest pain and I'm sweating a lot"
+  symptoms: [chest pain, sweating]
+  age: 58
+  duration_days: 1
+  severity: 9
+  expect_emergency: true
+
+- id: emergency-breathing
+  text: "i cant breathe properly since this morning"
+  symptoms: [breathlessness]
+  age: 40
+  duration_days: 1
+  severity: 8
+  expect_emergency: true
+
+- id: emergency-stroke-signs
+  text: "my speech is slurred and one side feels weak"
+  symptoms: [slurred speech, weakness of one body side]
+  age: 67
+  duration_days: 1
+  severity: 9
+  expect_emergency: true
+
+- id: emergency-anaphylaxis
+  text: "my throat is swelling after eating peanuts"
+  symptoms: [breathlessness]
+  age: 25
+  duration_days: 1
+  severity: 9
+  expect_emergency: true
+
+- id: emergency-third-party-present-tense
+  text: "my father is having chest pain right now"
+  symptoms: [chest pain]
+  age: 62
+  duration_days: 1
+  severity: 9
+  expect_emergency: true
+
+- id: crisis-suicidal
+  text: "I don't want to live anymore"
+  symptoms: [fatigue]
+  age: 22
+  duration_days: 30
+  severity: 6
+  expect_crisis: true
+
+- id: crisis-overdose
+  text: "i took too many pills an hour ago"
+  symptoms: [vomiting]
+  age: 19
+  duration_days: 1
+  severity: 8
+  expect_crisis: true
+
+# ---------------------------------------------------------------------------
+# Red flags that must NOT fire: negation and history.
+# ---------------------------------------------------------------------------
+- id: negated-chest-pain
+  text: "no chest pain, but I have a bad headache and a fever"
+  symptoms: [headache, high fever, chills, fatigue]
+  age: 30
+  duration_days: 2
+  severity: 5
+  expect_emergency: false
+
+- id: history-heart-attack
+  text: "my father had a heart attack last year, I just have a cough and runny nose"
+  symptoms: [cough, runny nose, continuous sneezing, throat irritation]
+  age: 35
+  duration_days: 3
+  severity: 3
+  expect_emergency: false
+  expect_condition: common cold
+
+# ---------------------------------------------------------------------------
+# Ordinary presentations.
+# ---------------------------------------------------------------------------
+- id: dengue-classic
+  text: "high fever with chills, terrible headache and pain behind my eyes, my joints ache"
+  symptoms:
+    [high fever, chills, headache, pain behind the eyes, joint pain,
+     muscle pain, nausea, fatigue, skin rash, loss of appetite]
+  age: 28
+  duration_days: 4
+  severity: 8
+  expect_condition: dengue
+  expect_disposition: urgent_today
+
+- id: malaria-classic
+  text: "fever comes with shivering, then sweating, and I keep vomiting"
+  symptoms: [high fever, chills, sweating, vomiting, headache, nausea, muscle pain]
+  age: 34
+  duration_days: 5
+  severity: 7
+  expect_top3: [malaria, dengue, typhoid]
+  expect_disposition: urgent_today
+
+- id: typhoid-classic
+  text: "fever for over a week with belly pain and constipation"
+  symptoms:
+    [high fever, abdominal pain, belly pain, constipation, headache, fatigue,
+     nausea, chills]
+  age: 26
+  duration_days: 10
+  severity: 6
+  expect_top3: [typhoid, malaria, dengue]
+
+- id: common-cold
+  text: "running nose, sneezing constantly and my throat hurts"
+  symptoms:
+    [runny nose, continuous sneezing, throat irritation, cough, congestion,
+     sinus pressure, headache]
+  age: 31
+  duration_days: 3
+  severity: 3
+  expect_condition: common cold
+  expect_disposition: self_care
+
+- id: migraine
+  text: "one sided pounding headache with blurry vision and I can't stand the light"
+  symptoms:
+    [headache, blurred and distorted vision, visual disturbances, irritability,
+     depression, indigestion]
+  age: 29
+  duration_days: 2
+  severity: 7
+  expect_condition: migraine
+
+- id: gerd
+  text: "burning in my stomach with acidity and it comes up my chest after meals"
+  symptoms: [stomach pain, acidity, chest pain, cough, ulcers on tongue]
+  age: 41
+  duration_days: 14
+  severity: 5
+  expect_condition: gerd
+
+- id: uti
+  text: "it burns when I pee and I keep needing to go"
+  symptoms:
+    [burning micturition, continuous feel of urine, bladder discomfort,
+     foul smell of urine]
+  age: 27
+  duration_days: 3
+  severity: 6
+  expect_condition: urinary tract infection
+
+- id: gastroenteritis
+  text: "throwing up and loose motions since yesterday, feeling very dehydrated"
+  symptoms: [vomiting, diarrhoea, dehydration, sunken eyes]
+  age: 23
+  duration_days: 2
+  severity: 6
+  expect_condition: gastroenteritis
+
+- id: chicken-pox
+  text: "fever with itchy red spots spreading all over my body"
+  symptoms:
+    [high fever, itching, red spots over body, skin rash, fatigue, headache,
+     loss of appetite, lethargy, malaise, swelled lymph nodes]
+  age: 12
+  duration_days: 3
+  severity: 6
+  expect_condition: chicken pox
+
+- id: fungal-infection
+  text: "itchy patches on my skin with a rash and discoloured spots"
+  symptoms: [itching, skin rash, nodal skin eruptions, dischromic patches]
+  age: 24
+  duration_days: 12
+  severity: 4
+  expect_condition: fungal infection
+  expect_disposition: self_care
+
+- id: hypothyroidism
+  text: "always exhausted, gaining weight, cold hands and my mood is all over the place"
+  symptoms:
+    [fatigue, weight gain, cold hands and feets, mood swings, depression,
+     lethargy, brittle nails, puffy face and eyes, irritability]
+  age: 45
+  duration_days: 90
+  severity: 5
+  expect_condition: hypothyroidism
+
+- id: cervical-spondylosis
+  text: "stiff painful neck and back with dizziness and my arms feel weak"
+  symptoms: [neck pain, back pain, dizziness, weakness in limbs, loss of balance]
+  age: 52
+  duration_days: 30
+  severity: 5
+  expect_condition: cervical spondylosis
+
+- id: arthritis
+  text: "my joints are swollen and stiff and walking hurts"
+  symptoms:
+    [swelling joints, movement stiffness, painful walking, muscle weakness,
+     stiff neck]
+  age: 63
+  duration_days: 60
+  severity: 6
+  expect_condition: arthritis
+
+- id: allergy
+  text: "sneezing nonstop with watery eyes and shivering"
+  symptoms: [continuous sneezing, watering from eyes, shivering, chills]
+  age: 30
+  duration_days: 2
+  severity: 3
+  expect_condition: allergy
+  expect_disposition: self_care
+
+- id: piles
+  text: "bleeding when I pass stool with pain in the anal region and constipation"
+  symptoms:
+    [bloody stool, pain in anal region, constipation, irritation in anus,
+     pain during bowel movements]
+  age: 44
+  duration_days: 20
+  severity: 5
+  expect_condition: dimorphic hemmorhoids(piles)
+
+- id: psoriasis
+  text: "silvery scaly patches on my skin that peel, and my nails are pitted"
+  symptoms:
+    [skin peeling, silver like dusting, small dents in nails, inflammatory nails,
+     skin rash, joint pain]
+  age: 38
+  duration_days: 120
+  severity: 4
+  expect_condition: psoriasis
+
+- id: varicose-veins
+  text: "prominent veins on my calf with cramps and swollen legs"
+  symptoms:
+    [prominent veins on calf, cramps, swollen legs, swollen blood vessels,
+     bruising, fatigue]
+  age: 50
+  duration_days: 180
+  severity: 4
+  expect_condition: varicose veins
+
+- id: impetigo
+  text: "red sores around my nose with yellow crusty ooze and a fever"
+  symptoms: [red sore around nose, yellow crust ooze, blister, high fever, skin rash]
+  age: 8
+  duration_days: 4
+  severity: 5
+  expect_condition: impetigo
+
+- id: diabetes
+  text: "always thirsty and hungry, peeing a lot, losing weight and blurry vision"
+  symptoms:
+    [excessive hunger, increased appetite, polyuria, weight loss,
+     blurred and distorted vision, fatigue, lethargy, restlessness,
+     irregular sugar level]
+  age: 48
+  duration_days: 60
+  severity: 5
+  expect_condition: diabetes
+
+- id: peptic-ulcer
+  text: "burning pain in my abdomen with indigestion, no appetite and gas"
+  symptoms:
+    [abdominal pain, indigestion, loss of appetite, passage of gases,
+     internal itching, vomiting]
+  age: 39
+  duration_days: 21
+  severity: 5
+  expect_top3: [peptic ulcer diseae, gerd, typhoid]
+
+- id: jaundice
+  text: "my skin looks yellow, dark urine and I feel tired with belly pain"
+  symptoms:
+    [yellowish skin, dark urine, fatigue, abdominal pain, itching, high fever,
+     weight loss, vomiting]
+  age: 33
+  duration_days: 7
+  severity: 6
+  expect_top3: [jaundice, hepatitis a, hepatitis b, chronic cholestasis]
+
+# ---------------------------------------------------------------------------
+# Presentations the engine should refuse to name.
+# ---------------------------------------------------------------------------
+- id: vague-tired
+  text: "just feeling tired all the time"
+  symptoms: [fatigue]
+  age: 33
+  duration_days: 14
+  severity: 3
+  expect_unspecified: true
+  expect_disposition: self_care
+
+- id: vague-headache
+  text: "mild headache since yesterday"
+  symptoms: [headache]
+  age: 27
+  duration_days: 1
+  severity: 3
+  expect_unspecified: true
+  expect_disposition: self_care
+
+- id: unrecognised-symptoms
+  text: "my left earlobe tingles when the weather changes"
+  symptoms: []
+  age: 35
+  duration_days: 5
+  severity: 2
+  expect_clarification: true
+
+# ---------------------------------------------------------------------------
+# Risk and disposition, independent of which condition wins.
+# ---------------------------------------------------------------------------
+- id: infant-high-fever
+  text: "my baby has a high fever and keeps vomiting"
+  symptoms: [high fever, vomiting, chills, fatigue]
+  age: 1
+  duration_days: 1
+  severity: 8
+  expect_disposition: urgent_today
+
+- id: elderly-prolonged-cough
+  # Three weeks of productive cough at 74. "Within 72 hours" is the defensible
+  # answer here and the engine gives it; this vignette originally demanded
+  # same-day care, which was the author guessing rather than triaging. It is
+  # kept because it pins the age and duration contribution to the score.
+  text: "cough with phlegm that won't go away and I get tired easily"
+  symptoms: [cough, phlegm, fatigue, malaise, chills]
+  age: 74
+  duration_days: 21
+  severity: 6
+  expect_disposition: see_doctor_soon
+
+- id: young-adult-mild
+  text: "slight sore throat and a bit of sneezing"
+  symptoms: [throat irritation, continuous sneezing, runny nose]
+  age: 24
+  duration_days: 2
+  severity: 2
+  expect_disposition: self_care

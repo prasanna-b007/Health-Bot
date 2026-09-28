@@ -6,7 +6,7 @@ continuous_sneezing,2
 shivering,2
 chills,3
 joint_pain,1
-stomach_pain,2
+stomach_pain,4
 acidity,3
 ulcers_on_tongue,2
 muscle_wasting,3
@@ -28,7 +28,7 @@ high_fever,4
 sunken_eyes,3
 breathlessness,5
 sweating,3
-dehydration,2
+dehydration,3
 indigestion,2
 headache,1
 yellowish_skin,3
@@ -39,13 +39,13 @@ pain_behind_the_eyes,2
 back_pain,3
 constipation,2
 abdominal_pain,2
-diarrhoea,2
+diarrhoea,3
 mild_fever,2
 yellow_urine,2
-yellowing_of_eyes,2
-acute_liver_failure,2
+yellowing_of_eyes,4
+acute_liver_failure,5
 fluid_overload,2
-swelling_of_stomach,2
+swelling_of_stomach,4
 swelled_lymph_nodes,2
 malaise,2
 blurred_and_distorted_vision,2
@@ -86,7 +86,7 @@ movement_stiffness,2
 spinning_movements,2
 loss_of_balance,2
 unsteadiness,2
-weakness_of_one_body_side,2
+weakness_of_one_body_side,5
 loss_of_smell,3
 bladder_discomfort,2
 foul_smell_ofurine,2
@@ -97,7 +97,7 @@ toxic_look_(typhos),2
 depression,3
 irritability,2
 muscle_pain,2
-altered_sensorium,2
+altered_sensorium,5
 red_spots_over_body,3
 belly_pain,2
 abnormal_menstruation,2
@@ -117,7 +117,7 @@ stomach_bleeding,2
 distention_of_abdomen,2
 history_of_alcohol_consumption,2
 fluid_overload,2
-blood_in_sputum,2
+blood_in_sputum,5
 prominent_veins_on_calf,2
 palpitations,2
 painful_walking,2

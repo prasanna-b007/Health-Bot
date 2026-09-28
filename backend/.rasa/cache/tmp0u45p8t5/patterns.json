@@ -1,6 +1,0 @@
-[
-  {
-    "name": "disease",
-    "pattern": "(\\bdengue\\b|\\bmalaria\\b|\\btyphoid\\b|\\bcholera\\b|\\btuberculosis\\b|\\bhepatitis\\ a\\b|\\bhepatitis\\ b\\b|\\bdiabetes\\b|\\bhypertension\\b|\\bpneumonia\\b)"
-  }
-]

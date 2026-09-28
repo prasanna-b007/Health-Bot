@@ -1,90 +1,104 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/assessment_data.dart';
 import 'rasa_service.dart';
 
-/// High-level API service that wraps [RasaService] and translates
-/// raw Rasa responses into typed Flutter models consumed by the UI.
+/// High-level API service that wraps [RasaService] and translates raw Rasa
+/// responses into typed Flutter models consumed by the UI.
+///
+/// One instance is one conversation: the sender ID it holds is what keeps Rasa
+/// slots continuous across screens, so pass the same instance down rather than
+/// constructing a new one per screen.
 class ApiService {
-  final RasaService _rasa = RasaService();
+  ApiService({RasaService? rasa}) : _rasa = rasa ?? RasaService();
+
+  final RasaService _rasa;
 
   String get sessionId => _rasa.senderId;
 
   /// Reset Rasa session (new sender ID = clean conversation context).
   void resetSession() => _rasa.resetSession();
 
+  void dispose() => _rasa.dispose();
+
   // -----------------------------------------------------------------------
   // Send initial symptoms with assessment metadata
   // -----------------------------------------------------------------------
 
-  /// Called from SymptomInputScreen after the user types their symptoms.
+  /// Sends the symptom text together with assessment metadata (age, duration,
+  /// severity) so the backend auto-populates those slots and skips asking.
   ///
-  /// Sends the symptom text together with assessment metadata (age,
-  /// duration, severity) so the Rasa backend auto-populates those slots
-  /// and skips asking for them during triage.
-  Future<TriageResponse> sendSymptoms(AssessmentData data) async {
+  /// [conditions] are the ongoing conditions from the user's stored profile.
+  /// They are sent because the risk engine uses them: asthma alongside a
+  /// confirmed respiratory symptom escalates the band, which changes the
+  /// advice the user is given. Passing them is the caller's decision, not this
+  /// class's — nothing here reaches into the profile store on its own.
+  ///
+  /// Allergies and medications are deliberately *not* sent. The engine has no
+  /// rule that consumes them, and uploading medical data that changes nothing
+  /// would be collection for its own sake.
+  Future<TriageResponse> sendSymptoms(
+    AssessmentData data, {
+    List<String> conditions = const [],
+  }) async {
+    return _send(
+      data.symptoms,
+      metadata: {
+        'age': data.age,
+        'duration': data.durationDays,
+        'severity': data.severity,
+        if (conditions.isNotEmpty) 'conditions': conditions,
+      },
+    );
+  }
+
+  /// Sends "yes", "no", or "I'm not sure" to continue the triage conversation.
+  Future<TriageResponse> answerQuestion(AnswerType answer) {
+    return _send(switch (answer) {
+      AnswerType.yes => 'yes',
+      AnswerType.no => 'no',
+      AnswerType.unsure => "I'm not sure",
+    });
+  }
+
+  /// Sends a free-text reply (used for numeric intake answers).
+  Future<TriageResponse> sendText(String text) => _send(text);
+
+  Future<TriageResponse> _send(
+    String message, {
+    Map<String, dynamic>? metadata,
+  }) async {
     try {
-      final responses = await _rasa.sendMessage(
-        data.symptoms,
-        metadata: {
-          'age': data.age,
-          'duration': data.durationDays,
-          'severity': data.severity,
+      final responses = await _rasa.sendMessage(message, metadata: metadata);
+      return _parseTriageResponse(responses);
+    } on RasaException catch (e) {
+      // Distinguish the failure modes. Previously every exception — including
+      // a parsing bug in this file — was reported as "could not connect",
+      // which sent users to check their network for an app-side defect.
+      debugPrint('$e (cause: ${e.cause})');
+      return TriageResponse(
+        isEmergency: false,
+        errorMessage: switch (e.kind) {
+          RasaErrorKind.network =>
+            'Could not reach the health server. Please check your connection and try again.',
+          RasaErrorKind.server =>
+            'The health server is having trouble right now. Please try again shortly.',
+          RasaErrorKind.parse =>
+            'The health server sent something we could not read. Please try again.',
+          RasaErrorKind.unauthorized =>
+            'This app is not authorised to reach the health server. Please update the app.',
         },
       );
-      return _parseTriageResponse(responses);
-    } catch (e) {
-      return TriageResponse(
-        isEmergency: false,
-        errorMessage: 'Could not connect to the health server. Please check your connection and try again.',
-      );
     }
-  }
-
-  // -----------------------------------------------------------------------
-  // Answer a follow-up question (yes / no / unsure)
-  // -----------------------------------------------------------------------
-
-  /// Sends "yes", "no", or "I'm not sure" to continue the Rasa triage conversation.
-  Future<TriageResponse> answerQuestion(AnswerType answer) async {
-    try {
-      String message;
-      switch (answer) {
-        case AnswerType.yes:
-          message = 'yes';
-          break;
-        case AnswerType.no:
-          message = 'no';
-          break;
-        case AnswerType.unsure:
-          message = "I'm not sure";
-          break;
-      }
-      final responses = await _rasa.sendMessage(message);
-      return _parseTriageResponse(responses);
-    } catch (e) {
-      return TriageResponse(
-        isEmergency: false,
-        errorMessage: 'Connection error. Please try again.',
-      );
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Nearby hospitals (static data — no backend required)
-  // -----------------------------------------------------------------------
-
-  Future<List<HospitalData>> getNearbyHospitals() async {
-    // In a production app this would call a location API.
-    // Kept as static data to avoid an external dependency.
-    return [
-      HospitalData(name: 'City General Hospital', distance: '1.2 km away', rawDistance: 1200, phone: '555-0199', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'General Hospital', estimatedTimeMins: 3, address: '123 Main St'),
-      HospitalData(name: 'Mercy Medical Center', distance: '3.4 km away', rawDistance: 3400, phone: '555-0188', hasEmergency: false, website: '', latitude: 0, longitude: 0, type: 'Private Hospital', estimatedTimeMins: 7, address: '456 Oak Ave'),
-      HospitalData(name: 'Westside Urgent Care', distance: '4.1 km away', rawDistance: 4100, phone: '555-0177', hasEmergency: true, website: '', latitude: 0, longitude: 0, type: 'Medical Facility', estimatedTimeMins: 9, address: '789 Pine Rd'),
-    ];
   }
 
   // -----------------------------------------------------------------------
   // Response parser
   // -----------------------------------------------------------------------
+
+  @visibleForTesting
+  TriageResponse parseForTest(List<RasaResponse> responses) =>
+      _parseTriageResponse(responses);
 
   TriageResponse _parseTriageResponse(List<RasaResponse> responses) {
     if (responses.isEmpty) {
@@ -94,102 +108,121 @@ class ApiService {
       );
     }
 
-    // Scan ALL responses for emergency or result (they may arrive
-    // alongside plain text messages like "Was this helpful?").
+    // Scan ALL responses — a result or emergency can arrive alongside plain
+    // text messages such as "Was this helpful?".
     for (final r in responses) {
       if (r.isEmergency) {
+        final crisis = r.isCrisis;
         return TriageResponse(
           isEmergency: true,
-          emergencyReason: r.text ?? 'Emergency symptoms detected.',
+          isCrisis: crisis,
+          // A crisis disclosure is never echoed back to the user. The backend
+          // already withholds the matched phrase; this makes sure the app
+          // cannot substitute the raw message text for it either.
+          emergencyReason: crisis
+              ? null
+              : (r.custom?['reason'] as String?) ??
+                    r.text ??
+                    'Emergency symptoms detected.',
         );
       }
-
       if (r.isResult) {
-        final custom = r.custom!;
-        final altRaw = custom['alternatives'] as List<dynamic>? ?? [];
-        final alternateNames = altRaw
-            .map((a) {
-              if (a is Map) return '${a["name"]} (${a["confidence"]}%)';
-              return a.toString();
-            })
-            .toList();
-        final adviceRaw = custom['advice'] as List<dynamic>? ?? [];
-        final adviceText = adviceRaw.map((a) => '• $a').join('\n');
-        
-        // Parse matched symptoms
-        final matchedRaw = custom['matched_symptoms'] as List<dynamic>? ?? [];
-        final matchedSymptoms = matchedRaw.map((s) => s.toString()).toList();
-        
-        // Parse recommended action
-        final recommendedAction = (custom['recommended_action'] as String?) ?? '';
-        
-        // Parse alternatives as raw maps for the results screen
-        final alternativesRaw = altRaw
-            .map((a) => a is Map ? Map<String, dynamic>.from(a) : <String, dynamic>{})
-            .toList();
+        return TriageResponse(isEmergency: false, result: _parseResult(r));
+      }
+    }
 
-        // Parse specialist info
-        final specialistRaw = custom['specialist'] as Map<String, dynamic>?;
-        final specialist = specialistRaw != null
-            ? SpecialistInfo.fromJson(specialistRaw)
-            : null;
-
+    for (final r in responses) {
+      if (r.isQuestion) {
         return TriageResponse(
           isEmergency: false,
-          result: AssessmentResult(
-            conditionName: (custom['top_condition'] as String?) ?? 
-                           (custom['condition'] as String?) ?? 'Unknown',
-            matchPercentage:
-                (custom['confidence'] as num?)?.toDouble() ?? 0.0,
-            alternateMatches: alternateNames.cast<String>(),
-            riskLevel: (custom['risk'] as String?) ?? 'medium',
-            riskScore: (custom['risk_score'] as int?) ?? 0,
-            riskFactors: (custom['risk_factors'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
-            advice: adviceText.isNotEmpty ? adviceText : (r.text ?? ''),
-            recommendedAction: recommendedAction,
-            matchedSymptoms: matchedSymptoms,
-            alternativesRaw: alternativesRaw,
-            specialist: specialist,
-          ),
+          nextQuestion: _parseQuestion(r),
         );
       }
     }
 
-    // No emergency or result found → treat as a follow-up question.
-    RasaResponse? questionResponse;
-    for (final r in responses) {
-      if (r.isQuestion) questionResponse = r;
-    }
-    
-    // If no structured question was found, treat it as a fallback/error message
-    if (questionResponse == null) {
-      return TriageResponse(
-        isEmergency: false,
-        errorMessage: responses.last.text ?? 'Could not understand symptoms. Please try again.',
-      );
-    }
-
-    final qCustom = questionResponse.custom ?? {};
-    final qText = qCustom['question'] as String? ??
-                   qCustom['question_text'] as String? ?? 
-                   questionResponse.text ?? 'Please answer:';
-    final qNum = qCustom['question_number'] as int? ?? 1;
-    final qInput = qCustom['input_type'] as String? ?? 'yes_no';
-    final qReason = qCustom['reason'] as String? ?? '';
-    final qEstTotal = qCustom['estimated_total'] as int? ?? 5;
-
+    // Not understood: surface the backend's own wording.
     return TriageResponse(
       isEmergency: false,
-      nextQuestion: TriageQuestion(
-        text: qText,
-        id: 'q$qNum',
-        inputType: qInput,
-        questionNumber: qNum,
-        reason: qReason,
-        estimatedTotal: qEstTotal,
-      ),
+      errorMessage:
+          responses.last.text ??
+          'Could not understand symptoms. Please try again.',
     );
   }
+
+  AssessmentResult _parseResult(RasaResponse r) {
+    final custom = r.custom ?? const <String, dynamic>{};
+
+    final altRaw = custom['alternatives'] as List<dynamic>? ?? const [];
+    final alternativesRaw = altRaw
+        .whereType<Map>()
+        .map((a) => Map<String, dynamic>.from(a))
+        .toList();
+    final alternateNames = alternativesRaw
+        .map((a) => '${a['name']} (${a['confidence']}%)')
+        .toList();
+
+    final adviceRaw = custom['advice'] as List<dynamic>? ?? const [];
+    final adviceText = adviceRaw.map((a) => '• $a').join('\n');
+
+    final band = ConfidenceBand.fromString(
+      custom['confidence_band'] as String?,
+    );
+
+    return AssessmentResult(
+      conditionName:
+          (custom['top_condition'] as String?) ??
+          (custom['condition'] as String?) ??
+          '',
+      matchPercentage: (custom['confidence'] as num?)?.toDouble() ?? 0.0,
+      confidenceBand: band,
+      confidenceLabel: (custom['confidence_label'] as String?) ?? band.label,
+      alternateMatches: alternateNames,
+      riskLevel: (custom['risk'] as String?) ?? 'medium',
+      riskScore: (custom['risk_score'] as num?)?.toInt() ?? 0,
+      riskFactors: _stringList(custom['risk_factors']),
+      advice: adviceText.isNotEmpty ? adviceText : (r.text ?? ''),
+      recommendedAction: (custom['recommended_action'] as String?) ?? '',
+      matchedSymptoms: _stringList(custom['matched_symptoms']),
+      ruledOutSymptoms: _stringList(custom['ruled_out_symptoms']),
+      alternativesRaw: alternativesRaw,
+      specialist: custom['specialist'] is Map
+          ? SpecialistInfo.fromJson(
+              Map<String, dynamic>.from(custom['specialist'] as Map),
+            )
+          : null,
+      disposition: Disposition.fromString(custom['disposition'] as String?),
+      dispositionLabel: custom['disposition_label'] as String?,
+      dispositionTimeframe: custom['disposition_timeframe'] as String?,
+      dispositionDetail: (custom['disposition_detail'] as String?) ?? '',
+      isUnspecified: custom['is_unspecified'] == true,
+      changesAnswer: ChangesAnswer.fromJson(custom['changes_answer']),
+      carePlan: custom['care_plan'] is Map
+          ? CarePlan.fromJson(
+              Map<String, dynamic>.from(custom['care_plan'] as Map),
+            )
+          : const CarePlan(),
+    );
+  }
+
+  TriageQuestion _parseQuestion(RasaResponse r) {
+    final custom = r.custom ?? const <String, dynamic>{};
+    final number = (custom['question_number'] as num?)?.toInt() ?? 1;
+    return TriageQuestion(
+      text:
+          (custom['question'] as String?) ??
+          (custom['question_text'] as String?) ??
+          r.text ??
+          'Please answer:',
+      id: 'q$number',
+      inputType: (custom['input_type'] as String?) ?? 'yes_no',
+      questionNumber: number,
+      reason: (custom['reason'] as String?) ?? '',
+      estimatedTotal: (custom['estimated_total'] as num?)?.toInt() ?? 5,
+    );
+  }
+
+  static List<String> _stringList(Object? raw) =>
+      (raw as List<dynamic>? ?? const []).map((e) => e.toString()).toList();
 }
 
 // ---------------------------------------------------------------------------
@@ -197,51 +230,28 @@ class ApiService {
 // ---------------------------------------------------------------------------
 
 class TriageResponse {
-  final bool isEmergency;
-  final String? emergencyReason;
-  final TriageQuestion? nextQuestion;
-  final AssessmentResult? result;
-  final String? errorMessage;
-
   TriageResponse({
     required this.isEmergency,
+    this.isCrisis = false,
     this.emergencyReason,
     this.nextQuestion,
     this.result,
     this.errorMessage,
   });
 
+  final bool isEmergency;
+
+  /// True when the user disclosed suicidal thoughts or self-harm.
+  ///
+  /// Still an emergency — [isEmergency] is also true, so any caller that only
+  /// knows about emergencies still escalates rather than silently carrying on
+  /// with triage. Callers that know about crises route to [CrisisScreen]
+  /// instead of the hospital finder, which is the whole point of the flag.
+  final bool isCrisis;
+  final String? emergencyReason;
+  final TriageQuestion? nextQuestion;
+  final AssessmentResult? result;
+  final String? errorMessage;
+
   bool get hasError => errorMessage != null;
-}
-
-// ---------------------------------------------------------------------------
-// Hospital data (static)
-// ---------------------------------------------------------------------------
-
-class HospitalData {
-  final String name;
-  final String distance;
-  final double rawDistance;
-  final String phone;
-  final bool hasEmergency;
-  final String website;
-  final double latitude;
-  final double longitude;
-  final String type;
-  final int estimatedTimeMins;
-  final String address;
-
-  HospitalData({
-    required this.name,
-    required this.distance,
-    required this.rawDistance,
-    required this.phone,
-    required this.hasEmergency,
-    required this.website,
-    required this.latitude,
-    required this.longitude,
-    required this.type,
-    required this.estimatedTimeMins,
-    required this.address,
-  });
 }

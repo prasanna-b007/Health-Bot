@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
+
+import '../motion/motion_query.dart';
+import '../theme/app_theme.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
-import '../theme/app_theme.dart';
+import '../services/health_store.dart';
 import 'home_screen.dart';
+import 'profile_screen.dart';
 
+/// Cold-start screen.
+///
+/// It holds for a fixed moment rather than waiting on work — the store is
+/// already loaded by the time this builds — so its only job is to show the
+/// mark before the first screen arrives.
+///
+/// The dwell is short on purpose. A splash that lingers is a tax on someone
+/// who may be opening this because they feel unwell.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -12,38 +24,62 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  static const _dwell = Duration(milliseconds: 1100);
+
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
-        );
-      }
-    });
+    Future.delayed(_dwell, _goHome);
+  }
+
+  void _goHome() {
+    if (!mounted) return;
+    final reduceMotion = MotionQuery.reduceMotion(context);
+    final store = HealthStore.instance;
+
+    final isFirstRun = !store.profile.isConfigured;
+
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        transitionDuration: Duration(milliseconds: reduceMotion ? 160 : 320),
+        pageBuilder: (_, _, _) =>
+            isFirstRun ? const ProfileScreen(isFirstRun: true) : const HomeScreen(),
+        // A plain cross-fade. Home is the same page with content on it, not a
+        // new place, so nothing needs to slide.
+        transitionsBuilder: (context, animation, _, child) => FadeTransition(
+          opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+          child: child,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.card,
       body: Center(
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.medical_services_outlined,
-              size: 64,
-              color: AppColors.secondary,
+            Container(
+              width: 76,
+              height: 76,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.signal,
+                borderRadius: BorderRadius.circular(AppTheme.radiusXl),
+              ),
+              child: const Icon(
+                Icons.monitor_heart_rounded,
+                size: 36,
+                color: AppColors.textInverse,
+              ),
             ),
-            const SizedBox(height: AppTheme.spacing24),
-            Text('Health-Bot', style: AppText.h1.copyWith(color: AppColors.primary)),
-            const SizedBox(height: AppTheme.spacing8),
-            Text('AI Healthcare Triage System', style: AppText.body),
-            const SizedBox(height: AppTheme.spacing24),
-            Text('Assess • Detect • Act', style: AppText.caption.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: AppTheme.space24),
+            Text('Health-Bot', style: AppText.h1),
+            const SizedBox(height: AppTheme.space4),
+            Text('Symptom checker', style: AppText.bodySm),
           ],
         ),
       ),

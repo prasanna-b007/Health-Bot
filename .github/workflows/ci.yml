@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (triage engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      # The engine modules (triage, scoring, emergency, datastore, text_utils)
+      # import no Rasa, so the whole decision path is tested without installing
+      # the heavy TensorFlow stack. Only actions.py needs rasa-sdk, which the
+      # action-server image job below exercises.
+      - name: Install test dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        working-directory: backend
+        run: pytest -v
+
+      # Prints the per-vignette scorecard into the build log. The gates live
+      # in the suite itself (accuracy floors, total red-flag recall); this
+      # step exists so a reviewer can see *which* presentations moved, not
+      # just that a threshold held.
+      - name: Triage evaluation scorecard
+        working-directory: backend
+        run: pytest tests/test_evaluation.py -s -q
+
+      - name: Check severity weights match the curated set
+        working-directory: backend
+        run: python update_weights.py --check
+
+  actions-image:
+    name: Action server image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The image build asserts the knowledge base loads and all 10 actions
+      # register, so a malformed CSV or a broken action class fails here rather
+      # than at the first user message in production.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.actions
+          push: false
+          load: true
+          tags: healthbot-actions:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start and probe
+        run: |
+          docker run -d --name actions -p 5055:5055 healthbot-actions:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:5055/health >/dev/null 2>&1; then
+              echo "action server healthy"
+              docker logs actions
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::action server did not become healthy"
+          docker logs actions
+          exit 1
+
+  api:
+    name: Stateless triage API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Not 3.10. The whole point of this service is that it does not carry
+      # Rasa's pin, and running it on a modern Python here is what proves it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        working-directory: backend
+        run: pip install -r requirements-api.txt -r requirements-dev.txt httpx
+
+      - name: Run API tests
+        working-directory: backend
+        run: pytest tests/test_api.py -v
+
+      # The engine has to behave identically on both runtimes, since the two
+      # servers share it. A failure here means a Python-version-dependent
+      # difference in triage, which is worth finding immediately.
+      - name: Run engine tests on 3.12
+        working-directory: backend
+        run: pytest --ignore=tests/test_live_server.py -q
+
+  app:
+    name: Flutter app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: health_bot_app
+        run: flutter pub get
+
+      # No `dart format --set-exit-if-changed` gate yet: most of lib/ predates
+      # this workflow and is not formatted, so enabling it here would fail
+      # every build. Run `dart format lib test` as its own commit first, then
+      # add the check.
+      - name: Analyze
+        working-directory: health_bot_app
+        run: flutter analyze
+
+      - name: Run tests
+        working-directory: health_bot_app
+        run: flutter test
+
+      # Proves the Android release configuration compiles — namespace, R8
+      # rules and the network security config. Signed with the debug key here
+      # because CI has no keystore; the release workflow refuses that.
+      - name: Build release APK (unsigned check)
+        working-directory: health_bot_app
+        run: |
+          flutter build apk --release \
+            --dart-define=RASA_BASE_URL=https://ci.invalid \
+            --dart-define=RASA_AUTH_TOKEN=ci \
+            --dart-define=PLACES_API_KEY=ci
+
+  secrets:
+    name: No committed secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A Geoapify key was previously committed in hospital_service.dart.
+      # Configuration now flows through --dart-define; this keeps it that way.
+      - name: Check for hardcoded API keys
+        run: |
+          if grep -rInE 'apiKey=[A-Za-z0-9]{16,}|api_key["'"'"']?\s*[:=]\s*["'"'"'][A-Za-z0-9]{16,}' \
+               --include='*.dart' --include='*.py' --include='*.yml' \
+               health_bot_app/lib backend/actions backend/*.yml; then
+            echo "::error::A hardcoded API key appears to be committed."
+            exit 1
+          fi
+          echo "No hardcoded API keys found."
+
+      - name: Check no keystore or env file is committed
+        run: |
+          if git ls-files | grep -InE '\.(jks|keystore)$|(^|/)key\.properties$|(^|/)env\.json$|(^|/)\.env$'; then
+            echo "::error::A signing or environment file is tracked by git."
+            exit 1
+          fi
+          echo "No signing or environment files tracked."

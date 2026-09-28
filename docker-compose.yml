@@ -1,0 +1,103 @@
+# Health-Bot backend: Rasa server + action server.
+#
+#   cp .env.example .env      # then set RASA_AUTH_TOKEN
+#   docker compose up --build
+#
+# The first build trains the model and installs TensorFlow, so expect it to
+# take several minutes. Subsequent builds reuse the layer cache unless data/,
+# config.yml or domain.yml change.
+#
+# This file exposes the API on localhost only. Putting it on a public network
+# requires a TLS-terminating reverse proxy in front — see DEPLOYMENT.md.
+
+services:
+  actions:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.actions
+    image: healthbot-actions:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      # rasa-sdk honours this for its own logging.
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Not published: only the Rasa server needs to reach the action server,
+    # and it does so over the internal compose network.
+    expose:
+      - "5055"
+    networks:
+      - healthbot
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5055/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  rasa:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: healthbot-rasa:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      actions:
+        condition: service_healthy
+    environment:
+      # Required. The entrypoint refuses to start without it unless
+      # RASA_ALLOW_UNAUTHENTICATED=true is set explicitly.
+      RASA_AUTH_TOKEN: ${RASA_AUTH_TOKEN:?set RASA_AUTH_TOKEN in .env}
+      # Comma-separated origins. Leave unset for native mobile clients, which
+      # do not send an Origin header and do not need CORS at all.
+      RASA_CORS: ${RASA_CORS:-}
+      RASA_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      # Bound to the loopback interface on purpose. Change to "5005:5005" only
+      # behind a reverse proxy that terminates TLS.
+      - "127.0.0.1:${RASA_PORT:-5005}:5005"
+    networks:
+      - healthbot
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5005/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+
+  # The stateless triage API: the same engine as the action server, without
+  # Rasa. Run it *instead of* the two services above once the app is pointed
+  # at it, or alongside them while migrating. It holds no conversation state,
+  # so it can be scaled with `--scale api=N` behind any load balancer --
+  # which the Rasa service cannot, because it has no tracker store.
+  #
+  # Start it with: docker compose --profile api up --build
+  api:
+    profiles: ["api"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.api
+    image: healthbot-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      HEALTHBOT_API_TOKEN: ${HEALTHBOT_API_TOKEN:?set HEALTHBOT_API_TOKEN in .env}
+      # Signs the session blobs the client carries. MUST be set, and identical
+      # across replicas, or a session signed by one is rejected by the next.
+      HEALTHBOT_STATE_SECRET: ${HEALTHBOT_STATE_SECRET:?set HEALTHBOT_STATE_SECRET in .env}
+      HEALTHBOT_REGION: ${HEALTHBOT_REGION:-global}
+      HEALTHBOT_CORS: ${HEALTHBOT_CORS:-}
+      HEALTHBOT_RATE_LIMIT: ${HEALTHBOT_RATE_LIMIT:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      # Loopback only, as above. Put TLS in front before exposing it.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks:
+      - healthbot
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+networks:
+  healthbot:
+    driver: bridge

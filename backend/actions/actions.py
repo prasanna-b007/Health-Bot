@@ -1,1164 +1,503 @@
-from typing import Tuple, Any, Text, Dict, List, Optional
-import csv
-import os
-import re
-import random
-import difflib
+"""Rasa action server: a thin adapter over the triage engine.
+
+This module deliberately contains no triage logic. Its whole job is to move
+values between Rasa slots and triage.TriageState, hand off to the engine, and
+translate the engine's messages back into dispatcher calls. The decision
+making lives in triage.py, scoring.py and emergency.py, none of which import
+Rasa -- which is what makes them testable without an action server.
+"""
+import logging
+from typing import Any, Dict, List, Optional, Text
 
 # pyrefly: ignore [missing-import]
 from rasa_sdk import Action, Tracker
 # pyrefly: ignore [missing-import]
-from rasa_sdk.executor import CollectingDispatcher
+from rasa_sdk.events import FollowupAction, SlotSet
 # pyrefly: ignore [missing-import]
-from rasa_sdk.events import SlotSet, FollowupAction
+from rasa_sdk.executor import CollectingDispatcher
 
-from .emergency import check_emergency, handle_emergency
-from .config import THRESHOLDS
-from .scoring import calculate_weighted_match_scores
-from .reason_map import REASON_MAP, DEFAULT_REASON
+from . import care_plan, emergency, triage
+from .datastore import DatasetError, load
+from .normalize import display, normalize_disease
+from .text_utils import parse_number
 
-# ---------------------------------------------------------------------------
-# Specialist mapping — covers every disease in dataset.csv
-# Keys use .title() casing to match the value sent in json_message
-# ---------------------------------------------------------------------------
-SPECIALIST_MAP = {
-    # Respiratory
-    "Pneumonia": {
-        "name": "Pulmonologist",
-        "description": "Specialist in lung and respiratory diseases.",
-        "icon": "lungs",
-        "priority": "Immediate",
-        "department": "Pulmonology"
-    },
-    "Bronchial Asthma": {
-        "name": "Pulmonologist",
-        "description": "Specialist in lung and respiratory diseases.",
-        "icon": "lungs",
-        "priority": "Soon",
-        "department": "Pulmonology"
-    },
-    "Tuberculosis": {
-        "name": "Pulmonologist",
-        "description": "Specialist in lung and respiratory diseases.",
-        "icon": "lungs",
-        "priority": "Immediate",
-        "department": "Pulmonology"
-    },
-    "Common Cold": {
-        "name": "General Physician",
-        "description": "A general physician manages common viral infections.",
-        "icon": "general",
-        "priority": "Routine",
-        "department": "General Medicine"
-    },
-    "Allergy": {
-        "name": "Allergist / Immunologist",
-        "description": "Specialist in allergic reactions and immune system conditions.",
-        "icon": "immune",
-        "priority": "Soon",
-        "department": "Allergy & Immunology"
-    },
+logger = logging.getLogger(__name__)
 
-    # Heart & Circulation
-    "Heart Attack": {
-        "name": "Cardiologist",
-        "description": "Specialist in heart and cardiovascular conditions.",
-        "icon": "heart",
-        "priority": "Immediate",
-        "department": "Cardiology"
-    },
-    "Hypertension": {
-        "name": "Cardiologist",
-        "description": "Specialist in heart and blood pressure conditions.",
-        "icon": "heart",
-        "priority": "Soon",
-        "department": "Cardiology"
-    },
-    "Hypertension ": {
-        "name": "Cardiologist",
-        "description": "Specialist in heart and blood pressure conditions.",
-        "icon": "heart",
-        "priority": "Soon",
-        "department": "Cardiology"
-    },
-    "Varicose Veins": {
-        "name": "Vascular Surgeon",
-        "description": "Specialist in vein and blood vessel conditions.",
-        "icon": "blood",
-        "priority": "Routine",
-        "department": "Vascular Surgery"
-    },
-
-    # Neurological
-    "Migraine": {
-        "name": "Neurologist",
-        "description": "Specialist in brain and nervous system disorders.",
-        "icon": "brain",
-        "priority": "Soon",
-        "department": "Neurology"
-    },
-    "(Vertigo) Paroymsal  Positional Vertigo": {
-        "name": "Neurologist",
-        "description": "Specialist in balance and nervous system disorders.",
-        "icon": "brain",
-        "priority": "Soon",
-        "department": "Neurology"
-    },
-    "Cervical Spondylosis": {
-        "name": "Orthopedic Surgeon",
-        "description": "Specialist in spine, bone, and joint conditions.",
-        "icon": "bone",
-        "priority": "Routine",
-        "department": "Orthopedics"
-    },
-    "Paralysis (Brain Hemorrhage)": {
-        "name": "Neurologist",
-        "description": "Specialist in brain and nervous system conditions.",
-        "icon": "brain",
-        "priority": "Immediate",
-        "department": "Neurology"
-    },
-
-    # Digestive / Liver
-    "Chronic Cholestasis": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver and digestive system conditions.",
-        "icon": "stomach",
-        "priority": "Soon",
-        "department": "Gastroenterology"
-    },
-    "Jaundice": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver and digestive system conditions.",
-        "icon": "stomach",
-        "priority": "Soon",
-        "department": "Gastroenterology"
-    },
-    "Hepatitis A": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver infections and digestive conditions.",
-        "icon": "stomach",
-        "priority": "Soon",
-        "department": "Gastroenterology"
-    },
-    "Hepatitis B": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver infections and digestive conditions.",
-        "icon": "stomach",
-        "priority": "Immediate",
-        "department": "Gastroenterology"
-    },
-    "Hepatitis C": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver infections and digestive conditions.",
-        "icon": "stomach",
-        "priority": "Immediate",
-        "department": "Gastroenterology"
-    },
-    "Hepatitis D": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver infections and digestive conditions.",
-        "icon": "stomach",
-        "priority": "Immediate",
-        "department": "Gastroenterology"
-    },
-    "Hepatitis E": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver infections and digestive conditions.",
-        "icon": "stomach",
-        "priority": "Soon",
-        "department": "Gastroenterology"
-    },
-    "Alcoholic Hepatitis": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in liver conditions and digestive health.",
-        "icon": "stomach",
-        "priority": "Immediate",
-        "department": "Gastroenterology"
-    },
-    "Gerd": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in digestive and acid reflux conditions.",
-        "icon": "stomach",
-        "priority": "Routine",
-        "department": "Gastroenterology"
-    },
-    "Gastroenteritis": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in digestive and stomach conditions.",
-        "icon": "stomach",
-        "priority": "Soon",
-        "department": "Gastroenterology"
-    },
-    "Peptic Ulcer Diseae": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in digestive and stomach conditions.",
-        "icon": "stomach",
-        "priority": "Soon",
-        "department": "Gastroenterology"
-    },
-    "Dimorphic Hemmorhoids(Piles)": {
-        "name": "Gastroenterologist",
-        "description": "Specialist in digestive and colorectal conditions.",
-        "icon": "stomach",
-        "priority": "Routine",
-        "department": "Gastroenterology"
-    },
-
-    # Endocrine / Metabolic
-    "Diabetes": {
-        "name": "Endocrinologist",
-        "description": "Specialist in hormone and metabolic conditions including diabetes.",
-        "icon": "metabolism",
-        "priority": "Soon",
-        "department": "Endocrinology"
-    },
-    "Diabetes ": {
-        "name": "Endocrinologist",
-        "description": "Specialist in hormone and metabolic conditions including diabetes.",
-        "icon": "metabolism",
-        "priority": "Soon",
-        "department": "Endocrinology"
-    },
-    "Hypothyroidism": {
-        "name": "Endocrinologist",
-        "description": "Specialist in thyroid and hormone conditions.",
-        "icon": "metabolism",
-        "priority": "Routine",
-        "department": "Endocrinology"
-    },
-    "Hyperthyroidism": {
-        "name": "Endocrinologist",
-        "description": "Specialist in thyroid and hormone conditions.",
-        "icon": "metabolism",
-        "priority": "Soon",
-        "department": "Endocrinology"
-    },
-    "Hypoglycemia": {
-        "name": "Endocrinologist",
-        "description": "Specialist in blood sugar and metabolic conditions.",
-        "icon": "metabolism",
-        "priority": "Immediate",
-        "department": "Endocrinology"
-    },
-
-    # Infectious / General
-    "Dengue": {
-        "name": "General Physician",
-        "description": "A general physician manages dengue and common infections.",
-        "icon": "virus",
-        "priority": "Immediate",
-        "department": "General Medicine"
-    },
-    "Malaria": {
-        "name": "General Physician",
-        "description": "A general physician manages malaria and tropical infections.",
-        "icon": "virus",
-        "priority": "Immediate",
-        "department": "General Medicine"
-    },
-    "Typhoid": {
-        "name": "General Physician",
-        "description": "A general physician manages typhoid and bacterial infections.",
-        "icon": "virus",
-        "priority": "Soon",
-        "department": "General Medicine"
-    },
-    "Aids": {
-        "name": "Infectious Disease Specialist",
-        "description": "Specialist in HIV/AIDS and immune system conditions.",
-        "icon": "immune",
-        "priority": "Immediate",
-        "department": "Infectious Diseases"
-    },
-    "Drug Reaction": {
-        "name": "General Physician",
-        "description": "A general physician manages drug reactions and medication issues.",
-        "icon": "general",
-        "priority": "Immediate",
-        "department": "General Medicine"
-    },
-    "Chicken Pox": {
-        "name": "General Physician",
-        "description": "A general physician manages chickenpox and viral infections.",
-        "icon": "virus",
-        "priority": "Routine",
-        "department": "General Medicine"
-    },
-
-    # Skin
-    "Fungal Infection": {
-        "name": "Dermatologist",
-        "description": "Specialist in skin, nail, and fungal conditions.",
-        "icon": "skin",
-        "priority": "Routine",
-        "department": "Dermatology"
-    },
-    "Psoriasis": {
-        "name": "Dermatologist",
-        "description": "Specialist in chronic skin conditions.",
-        "icon": "skin",
-        "priority": "Routine",
-        "department": "Dermatology"
-    },
-    "Impetigo": {
-        "name": "Dermatologist",
-        "description": "Specialist in skin infections.",
-        "icon": "skin",
-        "priority": "Soon",
-        "department": "Dermatology"
-    },
-    "Acne": {
-        "name": "Dermatologist",
-        "description": "Specialist in skin conditions and acne treatment.",
-        "icon": "skin",
-        "priority": "Routine",
-        "department": "Dermatology"
-    },
-
-    # Musculoskeletal
-    "Arthritis": {
-        "name": "Rheumatologist",
-        "description": "Specialist in joint and autoimmune conditions.",
-        "icon": "bone",
-        "priority": "Soon",
-        "department": "Rheumatology"
-    },
-    "Osteoarthristis": {
-        "name": "Orthopedic Surgeon",
-        "description": "Specialist in bone and joint conditions.",
-        "icon": "bone",
-        "priority": "Routine",
-        "department": "Orthopedics"
-    },
-
-    # Urinary
-    "Urinary Tract Infection": {
-        "name": "Urologist",
-        "description": "Specialist in urinary tract and kidney conditions.",
-        "icon": "kidney",
-        "priority": "Soon",
-        "department": "Urology"
-    },
-}
-
-DEFAULT_SPECIALIST = {
-    "name": "General Physician",
-    "description": "A general physician can assess your condition and refer you to the right specialist.",
-    "icon": "general",
-    "priority": "Routine",
-    "department": "General Medicine"
-}
-
-# ---------------------------------------------------------------------------
-# File Paths
-# ---------------------------------------------------------------------------
-_BASE_PATH = os.path.dirname(__file__)
-_DATASET_PATH     = os.path.join(_BASE_PATH, "..", "datasets", "dataset.csv")
-_DESCRIPTION_PATH = os.path.join(_BASE_PATH, "..", "datasets", "symptom_Description.csv")
-_PRECAUTION_PATH  = os.path.join(_BASE_PATH, "..", "datasets", "symptom_precaution.csv")
-_SEVERITY_PATH    = os.path.join(_BASE_PATH, "..", "datasets", "Symptom-severity.csv")
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-DISCLAIMER = "\n\n_This is not a medical diagnosis. Please consult a qualified healthcare professional._"
-
-HIGH_SEVERITY_THRESHOLD = THRESHOLDS["SEVERITY_HIGH"]
-MIN_SYMPTOMS_TO_CONCLUDE = 2
-MAX_QUESTIONS = 5
-_DANGEROUS_DISEASES = ["paralysis (brain hemorrhage)", "heart attack"]
+# Load and validate the knowledge base at import time so a broken dataset
+# surfaces when the action server starts, not silently mid-conversation.
+try:
+    KB = load()
+except DatasetError:
+    logger.exception("Knowledge base failed to load; the action server cannot triage")
+    raise
 
 
 # ---------------------------------------------------------------------------
-# Empathetic question templates
+# Slot <-> TriageState
 # ---------------------------------------------------------------------------
-_FOLLOWUP_TEMPLATES = [
-    "To help narrow this down, are you also dealing with **{symptom}**?",
-    "Just to confirm, are you experiencing **{symptom}** as well?",
-    "Let me check one more thing — do you also have **{symptom}**?",
-    "Are you also noticing any **{symptom}**?",
-    "To better assess your condition, do you have **{symptom}**?"
-]
+def _as_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(v) for v in value if v]
+    return []
 
-def _followup_question(symptom: str) -> str:
-    template = random.choice(_FOLLOWUP_TEMPLATES)
-    return template.format(symptom=symptom.replace("_", " ").title())
 
-# ---------------------------------------------------------------------------
-# Symptom Aliases
-# ---------------------------------------------------------------------------
-ALIASES: Dict[str, List[str]] = {
-    "high fever": ["fever", "mild fever", "high temperature", "temperature",
-              "feverish", "feeling hot", "feaver", "tempature", "running a fever"],
-    "headache": ["head pain", "head ache", "head is pounding", "migraine", "headake"],
-    "rash": ["skin rash", "nodal skin eruptions", "rashes"],
-    "itching": ["itchy skin", "skin itch", "itchy"],
-    "burning micturition": ["burning sensation while urinating", "burning while peeing",
-                            "burning urination", "pain while urinating",
-                            "burning when i urinate", "it burns when i pee", "painful urination"],
-    "fatigue": ["tiredness", "tired all the time", "always tired", "feeling tired",
-                "no energy", "weakness", "feeling weak", "exhausted"],
-    "vomiting": ["throwing up", "puking", "vomit"],
-    "nausea": ["nauseous", "feel like vomiting", "want to vomit", "queasy"],
-    "cough": ["coughing", "continuous cough", "persistent cough"],
-    "chest pain": ["chest tightness", "pain in chest", "chest hurts", "pressure in chest"],
-    "breathlessness": ["shortness of breath", "difficulty breathing", "cant breathe",
-                       "hard to breathe", "breathless", "breathing difficulty"],
-    "dizziness": ["dizzy", "feeling dizzy", "light headed", "lightheaded", "spinning"],
-    "joint pain": ["joints hurt", "joint ache", "joints aching", "joint swelling"],
-    "back pain": ["pain in back", "backache", "lower back pain"],
-    "stomach pain": ["abdominal pain", "stomach ache", "tummy ache",
-                     "pain in stomach", "belly pain"],
-    "diarrhoea": ["diarrhea", "loose stools", "loose motion", "watery stool"],
-    "sweating": ["excessive sweating", "night sweats", "profuse sweating"],
-    "weight loss": ["losing weight", "lost weight", "weight has reduced"],
-    "yellowing of eyes": ["yellow eyes", "jaundice eyes", "yellow skin and eyes"],
-    "skin rash": ["rash on skin", "body rash", "rashes on body"],
-    "high fever": ["very high fever", "high grade fever", "severe fever", "high feaver"],
-    "chills": ["shivering", "cold chills", "feeling cold"],
-    "loss of appetite": ["no appetite", "not feeling hungry", "cant eat"],
-    "muscle pain": ["muscle ache", "body ache", "body pain", "myalgia"],
-    "neck pain": ["stiff neck", "pain in neck"],
-    "blurred vision": ["blurry vision", "vision is blurry", "cant see clearly"],
-    "runny nose": ["running nose", "watery nose", "nose is running"],
-}
+def _as_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return None
 
-# ---------------------------------------------------------------------------
-# Data Loading & Caching
-# ---------------------------------------------------------------------------
-_DISEASE_SYMPTOMS_CACHE: Dict[str, List[str]] = {}
-_SEVERITY_CACHE: Dict[str, int] = {}
-_PRECAUTION_CACHE: Dict[str, List[str]] = {}
 
-def load_severity() -> Dict[str, int]:
-    global _SEVERITY_CACHE
-    if _SEVERITY_CACHE: return _SEVERITY_CACHE
-    try:
-        with open(_SEVERITY_PATH, encoding="utf-8") as f:
-            for row in csv.reader(f):
-                if row and row[0].strip().lower() != "symptom":
-                    key = row[0].strip().replace("_", " ").lower()
-                    _SEVERITY_CACHE[key] = int(row[1])
-    except Exception: pass
-    return _SEVERITY_CACHE
+def state_from_tracker(tracker: Tracker) -> triage.TriageState:
+    return triage.TriageState(
+        confirmed=_as_list(tracker.get_slot("confirmed_symptoms")),
+        denied=_as_list(tracker.get_slot("denied_symptoms")),
+        unknown=_as_list(tracker.get_slot("unknown_symptoms")),
+        asked=_as_list(tracker.get_slot("asked_symptoms")),
+        pending=tracker.get_slot("pending_symptom"),
+        question_count=_as_int(tracker.get_slot("question_count")) or 0,
+        age=_as_int(tracker.get_slot("user_age")),
+        duration_days=_as_int(tracker.get_slot("duration_days")),
+        severity=_as_int(tracker.get_slot("severity")),
+        stage=tracker.get_slot("triage_state"),
+        conditions=_as_list(tracker.get_slot("chronic_conditions")),
+    )
 
-def load_dataset() -> Dict[str, List[str]]:
-    global _DISEASE_SYMPTOMS_CACHE
-    if _DISEASE_SYMPTOMS_CACHE: return _DISEASE_SYMPTOMS_CACHE
-    try:
-        with open(_DATASET_PATH, encoding="utf-8") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if not row: continue
-                disease = row[0].strip().lower()
-                symptoms = [s.strip().replace("_", " ").lower() for s in row[1:] if s.strip()]
-                if disease not in _DISEASE_SYMPTOMS_CACHE:
-                    _DISEASE_SYMPTOMS_CACHE[disease] = []
-                for s in symptoms:
-                    if s not in _DISEASE_SYMPTOMS_CACHE[disease]:
-                        _DISEASE_SYMPTOMS_CACHE[disease].append(s)
-    except Exception: pass
-    return _DISEASE_SYMPTOMS_CACHE
 
-def load_precautions() -> Dict[str, List[str]]:
-    global _PRECAUTION_CACHE
-    if _PRECAUTION_CACHE: return _PRECAUTION_CACHE
-    try:
-        with open(_PRECAUTION_PATH, encoding="utf-8") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if row:
-                    disease = row[0].strip().lower()
-                    # Filter out bad advice and fix typos
-                    raw_precautions = [v.strip() for v in row[1:] if v.strip()]
-                    safe = []
-                    for p in raw_precautions:
-                        p_lower = p.lower()
-                        # Remove unsafe or overly specific advice
-                        if any(bad in p_lower for bad in ["papaya", "radioactive", "witch hazel", "medication", "antibiotic", "antiboitic", "therapy", "asprin", "vaccine", "surgery"]):
-                            continue
-                        # Spelling corrections
-                        p = p.replace("vegitables", "vegetables").replace("Antiboitic", "antibiotic")
-                        safe.append(p)
-                    
-                    # Ensure we have our baseline safe precautions
-                    general_safe = ["Stay hydrated", "Maintain hygiene", "Avoid contaminated food/water", "Use mosquito protection where relevant", "Seek medical attention if symptoms worsen"]
-                    
-                    # We will completely replace with the safe general advice to be 100% compliant with the prompt's request for "general, non-prescriptive, safe for all users"
-                    _PRECAUTION_CACHE[disease] = general_safe
-    except Exception: pass
-    return _PRECAUTION_CACHE
+def events_from_state(state: triage.TriageState) -> List[Dict[Text, Any]]:
+    return [
+        SlotSet("confirmed_symptoms", state.confirmed),
+        SlotSet("denied_symptoms", state.denied),
+        SlotSet("unknown_symptoms", state.unknown),
+        SlotSet("asked_symptoms", state.asked),
+        SlotSet("pending_symptom", state.pending),
+        SlotSet("question_count", state.question_count),
+        SlotSet("user_age", state.age),
+        SlotSet("duration_days", state.duration_days),
+        SlotSet("severity", state.severity),
+        SlotSet("triage_state", state.stage),
+        SlotSet("chronic_conditions", state.conditions),
+        SlotSet("emergency_detected", False),
+    ]
 
-# ---------------------------------------------------------------------------
-# Emergency & Autocorrect
-# ---------------------------------------------------------------------------
-# is_emergency moved to emergency.py
 
-def autocorrect_text(text: str, all_symptoms: List[str]) -> str:
-    """Use difflib to correct user typos before extraction."""
-    valid_phrases = set()
-    for s in all_symptoms:
-        valid_phrases.add(s.replace("_", " "))
-    for syns in ALIASES.values():
-        for syn in syns:
-            valid_phrases.add(syn)
-            
-    single_word_terms = {p.lower() for p in valid_phrases if " " not in p}
-    
-    words = text.split()
-    corrected = []
-    for w in words:
-        clean_w = re.sub(r'[^\w\s]', '', w).lower()
-        if len(clean_w) >= 4 and clean_w not in single_word_terms:
-            matches = difflib.get_close_matches(clean_w, single_word_terms, n=1, cutoff=0.8)
-            if matches:
-                corrected.append(matches[0])
-                continue
-        corrected.append(w)
-    return " ".join(corrected)
-
-def extract_symptoms(text: str, all_symptoms: List[str]) -> List[str]:
-    text_corrected = autocorrect_text(text, all_symptoms)
-    text_lower = text_corrected.lower()
-    found: List[str] = []
-
-    for s in all_symptoms:
-        s_clean = s.replace("_", " ")
-        if re.search(r'\b' + re.escape(s_clean) + r'\b', text_lower):
-            if s not in found: found.append(s)
-
-    for canonical, synonyms in ALIASES.items():
-        matched = False
-        if re.search(r'\b' + re.escape(canonical) + r'\b', text_lower):
-            matched = True
-        if not matched:
-            for syn in synonyms:
-                if re.search(r'\b' + re.escape(syn) + r'\b', text_lower):
-                    matched = True
-                    break
-        if matched:
-            for actual in all_symptoms:
-                if actual.replace("_", " ") == canonical and actual not in found:
-                    found.append(actual)
-                    break
-            if canonical not in found and canonical in all_symptoms:
-                found.append(canonical)
-    return found
-
-# ---------------------------------------------------------------------------
-# Risk & Ranking
-# ---------------------------------------------------------------------------
-def calculate_match_scores(confirmed: List[str], disease_map: Dict[str, List[str]]) -> List[tuple]:
-    scores = []
-    for d, symps in disease_map.items():
-        total = len(symps)
-        if total == 0: continue
-        matched = len([s for s in confirmed if s in symps])
-        pct = (matched / total) * 100
-        if pct > 0:
-            scores.append((d, pct))
-    scores.sort(key=lambda x: x[1], reverse=True)
-    return scores
-
-def calculate_risk(
-    user_age: Optional[int],
-    duration_days: Optional[int],
-    severity_input: Optional[int],
-    max_weight: int
-) -> Tuple[str, List[str], int]:
-    reasons = []
-    score = 0
-    
-    # Phase 1: Severity Input
-    sev = severity_input or 1
-    if sev >= 7:
-        score += 25
-        reasons.append(f"High symptom severity ({sev}/10)")
-    elif sev >= 4:
-        score += 15
-        reasons.append(f"Moderate symptom severity ({sev}/10)")
-    else:
-        score += 5
-        
-    # Phase 2: Age Model
-    age = user_age if user_age is not None else 30
-    if age <= 2:
-        score += 25
-        reasons.append("Infant vulnerability")
-    elif age <= 12:
-        score += 5
-        reasons.append("Child vulnerability")
-    elif age >= 60:
-        score += 20
-        reasons.append("Elderly comorbidities")
-        
-    # Phase 3: Max Symptom Weight
-    if max_weight >= 4:
-        score += 30
-        reasons.append("High risk symptoms present")
-    elif max_weight == 3:
-        score += 15
-        reasons.append("Moderate risk symptoms present")
-    elif max_weight == 2:
-        score += 5
-        
-    # Phase 4: Duration Model
-    dur = duration_days or 1
-    if dur >= 7:
-        if max_weight >= 3:
-            score += 15
-            reasons.append(f"Prolonged concerning symptom ({dur} days)")
-    elif dur <= 2:
-        if max_weight >= 4:
-            score += 15
-            reasons.append("Acute onset of severe symptom")
-
-    if not reasons:
-        reasons.append("General assessment")
-            
-    if score >= 61:
-        risk_level = "High"
-    elif score >= 31:
-        risk_level = "Moderate"
-    else:
-        risk_level = "Low"
-        
-    return risk_level, reasons, score
-
-def _filter_dangerous(candidates: List[str], confirmed: List[str], disease_map: Dict[str, List[str]]) -> List[str]:
-    safe = []
-    for d in candidates:
-        if any(danger in d.lower() for danger in _DANGEROUS_DISEASES):
-            match_cnt = sum(1 for s in confirmed if s in disease_map.get(d, []))
-            if match_cnt >= 4: safe.append(d)
+def dispatch(dispatcher: CollectingDispatcher, outcome: triage.Outcome) -> List[Dict[Text, Any]]:
+    """Send the engine's messages and return the slot events they imply."""
+    for message in outcome.messages:
+        if message.payload is None:
+            dispatcher.utter_message(text=message.text)
         else:
-            safe.append(d)
-    return safe
+            dispatcher.utter_message(text=message.text, json_message=message.payload)
+    return events_from_state(outcome.state) if outcome.state else []
 
-def _best_next_symptom(candidates: List[str], disease_map: Dict[str, List[str]], asked: List[str], confirmed: List[str]) -> Optional[str]:
-    if not candidates: return None
-    match_counts = {d: sum(1 for s in confirmed if s in disease_map.get(d, [])) for d in candidates}
-    max_matches = max(match_counts.values(), default=0)
-    top_candidates = [d for d, cnt in match_counts.items() if cnt == max_matches]
 
-    freq: Dict[str, int] = {}
-    for d in top_candidates:
-        for s in disease_map.get(d, []):
-            if s not in asked:
-                freq[s] = freq.get(s, 0) + 1
-    if not freq:
-        for d in candidates:
-            for s in disease_map.get(d, []):
-                if s not in asked:
-                    freq[s] = freq.get(s, 0) + 1
-    if not freq: return None
-    max_freq = max(freq.values())
-    top_symptoms = sorted(s for s, f in freq.items() if f == max_freq)
-    return top_symptoms[0]
+# An upper bound on the conditions accepted from one message. The app's own
+# profile screen has no limit, and this endpoint is reachable by anything that
+# can talk to Rasa, so the engine caps what it will store rather than trusting
+# the client.
+MAX_CONDITIONS = 20
+MAX_CONDITION_LENGTH = 80
 
-def _parse_count(raw) -> int:
-    if raw is None: return 0
-    if isinstance(raw, (int, float)): return int(raw)
-    if isinstance(raw, str) and raw.isdigit(): return int(raw)
-    return 0
 
-# ---------------------------------------------------------------------------
-# Triage Core Logic
-# ---------------------------------------------------------------------------
-def _conclude_triage(
-    candidates: List[str],
-    confirmed: List[str],
-    disease_map: Dict[str, List[str]],
-    severity_map: Dict[str, int],
-    precaution_map: Dict[str, List[str]],
-    dispatcher: CollectingDispatcher,
-    base_events: List[Dict],
-    user_age: Optional[int],
-    duration: Optional[int],
-    severity: Optional[int]
-) -> List[Dict]:
-    
-    scores = calculate_weighted_match_scores(confirmed, disease_map)
-    # Filter dangerous from candidates used in scoring to be safe
-    # Though ranking handles it implicitly, it's good to keep safe
-    
-    reset_events = base_events + [
-        SlotSet("candidate_diseases", []),
-        SlotSet("confirmed_symptoms", []),
-        SlotSet("asked_symptoms", []),
-        SlotSet("pending_symptom", None),
-        SlotSet("question_count", 0),
-        SlotSet("unknown_symptoms", []),
-        SlotSet("user_age", None),
-        SlotSet("duration_days", None),
-        SlotSet("severity", None)
-    ]
-    
-    if not scores:
-        dispatcher.utter_message(
-            text="I wasn't able to identify a specific condition from your symptoms. Please describe more symptoms or consult a healthcare provider." + DISCLAIMER,
-            json_message={"type": "result", "top_condition": None, "confidence": 0, "risk": "low", "recommended_action": "Consult a healthcare provider for further evaluation.", "matched_symptoms": [], "alternatives": [], "advice": ["Please provide more details or consult a doctor."]}
-        )
-        return reset_events
-        
-    top_disease, top_pct = scores[0]
-    
-    if top_pct < THRESHOLDS["CONFIDENCE_LOW"]:
-        alt_list = [{"name": d.title(), "confidence": int(p)} for d, p in scores[1:3]]
-        dispatcher.utter_message(
-            text="Your symptoms do not clearly match a known condition.\nPlease provide more details or consult a doctor." + DISCLAIMER,
-            json_message={"type": "result", "top_condition": None, "confidence": int(top_pct), "risk": "low", "recommended_action": "Consult a healthcare provider for further evaluation.", "matched_symptoms": [s.replace('_', ' ').title() for s in confirmed], "alternatives": alt_list, "advice": ["Your symptoms don't clearly match a known condition.", "Please provide more details or consult a doctor."]}
-        )
-        return reset_events
-        
-    max_weight = max([severity_map.get(s.replace("_", " "), 1) for s in confirmed] + [1])
-    risk, risk_factors, risk_score = calculate_risk(user_age, duration, severity, max_weight)
-    
-    precautions = precaution_map.get(top_disease.lower(), [])
-    risk_emoji = {"Low": "🟢", "Moderate": "🟡", "High": "🔴"}.get(risk, "🟡")
-    
-    # ── Confidence-tier display rule ──
-    # High confidence (≥80): no alternatives
-    # Medium confidence (60-79): show 1 alternative
-    # Low confidence (40-59): show 2 alternatives
-    # Very low (<40): handled above
-    alternatives_list = []
-    if top_pct >= THRESHOLDS["CONFIDENCE_HIGH"]:
-        alternatives_list = []
-    elif top_pct >= THRESHOLDS["CONFIDENCE_MED"]:
-        for d, p in scores[1:2]:
-            alternatives_list.append({"name": d.title(), "confidence": int(p)})
+def apply_metadata(tracker: Tracker, state: triage.TriageState) -> None:
+    """Adopt intake values and profile conditions sent alongside the message.
+
+    Values outside plausible bounds are discarded rather than stored, so the
+    engine falls back to asking for them instead of scoring risk on a 999.
+
+    Chronic conditions arrive from the app's stored health profile and are
+    never asked for conversationally. They are only ever *added* to the state:
+    a follow-up message that omits them must not wipe the ones the first
+    message established, because the app sends them once, with the opening
+    symptom description.
+    """
+    metadata = (tracker.latest_message or {}).get("metadata") or {}
+    for key, attribute in (("age", "age"), ("duration", "duration_days"),
+                           ("severity", "severity")):
+        value = _as_int(metadata.get(key))
+        if value is not None:
+            setattr(state, attribute, value)
+
+    conditions = _as_condition_list(metadata.get("conditions"))
+    if conditions:
+        state.conditions = conditions
+
+    triage.sanitize_intake(state)
+
+
+def _as_condition_list(raw: Any) -> List[str]:
+    """Clean a client-supplied condition list into something safe to store."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    cleaned: List[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()[:MAX_CONDITION_LENGTH]
+        if text and text not in cleaned:
+            cleaned.append(text)
+        if len(cleaned) >= MAX_CONDITIONS:
+            break
+    return cleaned
+
+
+def latest_text(tracker: Tracker) -> str:
+    return ((tracker.latest_message or {}).get("text") or "").strip()
+
+
+def emergency_events(flag: emergency.RedFlag) -> List[Dict[Text, Any]]:
+    """Clear the assessment and hand off to the escalation action.
+
+    The message itself is emitted by ActionTriggerEmergency via FollowupAction
+    rather than dispatched here, so the emergency-override rule cannot also
+    fire and send it a second time.
+
+    The category rides along in a slot so the escalation action knows whether
+    to send the emergency-department message or the crisis-line one. A crisis
+    phrase is never logged: it is the most sensitive thing a user can type
+    here, and knowing that one was matched is all an operator needs.
+    """
+    if flag.is_crisis:
+        logger.info("Crisis red flag detected")
     else:
-        for d, p in scores[1:3]:
-            alternatives_list.append({"name": d.title(), "confidence": int(p)})
-    
-    advice_list = [p.capitalize() for p in precautions] if precautions else ["Monitor your symptoms closely."]
-    
-    # ── Recommended action based on risk level ──
-    if risk == "High":
-        recommended_action = "Seek medical attention within 24 hours."
-    elif risk == "Moderate":
-        recommended_action = "Medical consultation recommended."
-    else:
-        recommended_action = "Monitor symptoms and follow basic precautions."
-    
-    # ── Ranked matched symptoms (most→least relevant by severity weight) ──
-    matched_symptom_list = []
-    for s in confirmed:
-        s_clean = s.replace("_", " ")
-        weight = severity_map.get(s_clean, 1)
-        matched_symptom_list.append((s_clean.title(), weight))
-    matched_symptom_list.sort(key=lambda x: x[1], reverse=True)
-    ranked_symptom_names = [name for name, _ in matched_symptom_list]
-    
-    lines = [
-        f"Based on your symptoms, one possible condition is: **{top_disease.title()}** ({int(top_pct)}% match)",
-        f"Risk Level: {risk} (Score: {risk_score})\n",
-        f"Recommended Action: {recommended_action}\n",
-        "Risk Factors Considered:"
-    ]
-    for factor in risk_factors:
-        lines.append(f"✓ {factor}")
-    lines.append("")
-    
-    if alternatives_list:
-        lines.append("Other Potential Matches:")
-        for i, alt in enumerate(alternatives_list, start=2):
-            lines.append(f"{i}. {alt['name']} ({alt['confidence']}%)")
-        lines.append("")
-        
-    lines.append("Advice:")
-    for a in advice_list:
-        lines.append(f"* {a}")
-        
-    lines.append(DISCLAIMER)
-    
-    symptom_summary = ", ".join(s.replace("_", " ").title() for s in confirmed)
-    summary = (
-        f"\n---\n**Session Summary:**\n"
-        f"• **Symptoms:** {symptom_summary}\n"
-        f"• **Predicted Condition:** {top_disease.title()}\n"
-        f"• **Risk Level:** {risk}\n---"
-    )
-    
-    dispatcher.utter_message(
-        text="\n".join(lines) + summary,
-        json_message={
-            "type": "result",
-            "top_condition": top_disease.title(),
-            "condition": top_disease.title(),  # backwards compat
-            "confidence": int(top_pct),
-            "risk": risk.lower(),
-            "risk_score": risk_score,
-            "risk_factors": risk_factors,
-            "recommended_action": recommended_action,
-            "matched_symptoms": ranked_symptom_names,
-            "alternatives": alternatives_list,
-            "advice": advice_list,
-            "specialist": SPECIALIST_MAP.get(top_disease.title(), DEFAULT_SPECIALIST),
-        }
-    )
-    
-    dispatcher.utter_message(text="Was this helpful? (yes/no)")
-    reset_events.append(SlotSet("triage_state", "asking_feedback"))
-    
-    return reset_events
-
-def _process_triage_step(dispatcher: CollectingDispatcher, tracker: Tracker, additional_events: List[Dict] = None) -> List[Dict]:
-    events = additional_events or []
-    
-    def get_slot(name, default=None):
-        for e in reversed(events):
-            if e.get("event") == "slot" and e.get("name") == name:
-                return e.get("value")
-        return tracker.get_slot(name) or default
-
-    user_age = get_slot("user_age")
-    duration = get_slot("duration_days")
-    severity = get_slot("severity")
-    
-    if user_age is None:
-        events.append(SlotSet("triage_state", "asking_age"))
-        dispatcher.utter_message(
-            text="Before we proceed, could you please tell me your age?",
-            json_message={"type": "question", "question_text": "What is your age?", "input_type": "number"}
-        )
-        return events
-        
-    if duration is None:
-        events.append(SlotSet("triage_state", "asking_duration"))
-        dispatcher.utter_message(
-            text="How many days have you been experiencing these symptoms?",
-            json_message={"type": "question", "question_text": "How many days have you had these symptoms?", "input_type": "number"}
-        )
-        return events
-        
-    if severity is None:
-        events.append(SlotSet("triage_state", "asking_severity"))
-        dispatcher.utter_message(
-            text="On a scale of 1-10, how severe are your symptoms overall?",
-            json_message={"type": "question", "question_text": "Severity (1-10)?", "input_type": "number"}
-        )
-        return events
-        
-    events.append(SlotSet("triage_state", None))
-    
-    candidates = get_slot("candidate_diseases", [])
-    confirmed = get_slot("confirmed_symptoms", [])
-    asked = get_slot("asked_symptoms", [])
-    count = _parse_count(get_slot("question_count"))
-    
-    disease_map = load_dataset()
-    severity_map = load_severity()
-    precaution_map = load_precautions()
-    
-    if (len(candidates) <= 1 and len(confirmed) >= MIN_SYMPTOMS_TO_CONCLUDE) or count >= MAX_QUESTIONS:
-        return _conclude_triage(candidates, confirmed, disease_map, severity_map, precaution_map, dispatcher, events, user_age, duration, severity)
-        
-    next_s = _best_next_symptom(candidates, disease_map, asked, confirmed)
-    if not next_s:
-        return _conclude_triage(candidates, confirmed, disease_map, severity_map, precaution_map, dispatcher, events, user_age, duration, severity)
-        
-    question_text = _followup_question(next_s)
-    # Use the internal symptom key converted to underscore format to match reason_map.py keys
-    # (next_s comes from disease_map which uses space-separated keys like "joint pain",
-    #  but reason_map.py uses underscore keys like "joint_pain")
-    reason_key = next_s.replace(" ", "_")
-    reason = REASON_MAP.get(reason_key, DEFAULT_REASON)
-    # Estimate total questions: remaining candidates narrows, but ~MAX_QUESTIONS is our cap
-    estimated_total = max(MAX_QUESTIONS, count + 1)
-    dispatcher.utter_message(
-        text=question_text,
-        json_message={
-            "type": "question",
-            "question": question_text,
-            "question_text": question_text,  # backwards compat
-            "reason": reason,
-            "question_number": count + 1,
-            "estimated_total": estimated_total,
-            "input_type": "yes_no",
-        }
-    )
+        logger.info("Emergency red flag detected: %s", flag.phrase)
+    events = events_from_state(triage.TriageState())
     events.extend([
-        SlotSet("asked_symptoms", asked + [next_s]),
-        SlotSet("pending_symptom", next_s),
-        SlotSet("question_count", count + 1)
+        SlotSet("emergency_detected", True),
+        SlotSet("emergency_reason", None if flag.is_crisis else flag.phrase),
+        SlotSet("red_flag_category", flag.category),
+        FollowupAction("action_trigger_emergency"),
     ])
     return events
 
 
+def guard_emergency(
+    tracker: Tracker, state: triage.TriageState
+) -> Optional[List[Dict[Text, Any]]]:
+    """Return escalation events if this turn contains a red flag, else None."""
+    flag = triage.classify_red_flag(latest_text(tracker), state)
+    if flag is None:
+        return None
+    return emergency_events(flag)
+
+
 # ---------------------------------------------------------------------------
-# Actions
+# Triage actions
 # ---------------------------------------------------------------------------
 class ActionTriggerEmergency(Action):
+    """Emit the escalation message and release the emergency flag.
+
+    Clearing emergency_detected here is what stops the emergency-override rule
+    from re-firing on every subsequent turn for the rest of the session.
+    """
+
     def name(self) -> Text:
         return "action_trigger_emergency"
 
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        from .emergency import EMERGENCY_MSG
-        dispatcher.utter_message(
-            text=EMERGENCY_MSG,
-            json_message={"type": "emergency", "emergency": True}
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
+        category = tracker.get_slot("red_flag_category") or emergency.CATEGORY_EMERGENCY
+        reason = tracker.get_slot("emergency_reason")
+        outcome = triage.red_flag_outcome(
+            emergency.RedFlag(phrase=reason or "", category=category)
         )
-        return []
+        for message in outcome.messages:
+            dispatcher.utter_message(text=message.text, json_message=message.payload)
+        return [
+            SlotSet("emergency_detected", False),
+            SlotSet("emergency_reason", None),
+            SlotSet("red_flag_category", None),
+        ]
+
 
 class ActionDynamicFollowupQuestion(Action):
+    """Entry point: the user has described symptoms in free text."""
+
     def name(self) -> Text:
         return "action_dynamic_followup_question"
 
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        if check_emergency(tracker):
-            return handle_emergency()
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
+        state = state_from_tracker(tracker)
+        escalation = guard_emergency(tracker, state)
+        if escalation is not None:
+            return escalation
 
-        text = (tracker.latest_message.get("text") or "").strip()
+        apply_metadata(tracker, state)
+        outcome = triage.start(KB, latest_text(tracker), state)
 
-        # --- Phase 5: Read metadata from Flutter (auto-populate slots) ---
-        metadata = (tracker.latest_message.get("metadata") or {})
-        metadata_events: List[Dict[Text, Any]] = []
-        if metadata.get("age") is not None:
-            metadata_events.append(SlotSet("user_age", int(metadata["age"])))
-        if metadata.get("duration") is not None:
-            metadata_events.append(SlotSet("duration_days", int(metadata["duration"])))
-        if metadata.get("severity") is not None:
-            metadata_events.append(SlotSet("severity", int(metadata["severity"])))
+        # Symptoms confirmed from free text can themselves be red flags.
+        flag = triage.classify_red_flag(None, outcome.state)
+        if flag is not None:
+            return emergency_events(flag)
+        return dispatch(dispatcher, outcome)
 
-        all_symptoms = list(load_severity().keys())
-        found = extract_symptoms(text, all_symptoms)
-
-        if not found:
-            dispatcher.utter_message(text="I couldn't quite understand your symptoms. Could you describe them differently? (e.g. 'I have a high fever and headache')")
-            return metadata_events
-
-        disease_map = load_dataset()
-        candidates = [d for d, ss in disease_map.items() if any(s in ss for s in found)]
-        candidates = _filter_dangerous(candidates, found, disease_map)
-        
-        # Merge if continuing
-        existing_confirmed = tracker.get_slot("confirmed_symptoms") or []
-        existing_asked = tracker.get_slot("asked_symptoms") or []
-        combined_found = list(set(existing_confirmed + found))
-        combined_asked = list(set(existing_asked + found))
-
-        events = metadata_events + [
-            SlotSet("confirmed_symptoms", combined_found),
-            SlotSet("candidate_diseases", candidates),
-            SlotSet("asked_symptoms", combined_asked),
-            SlotSet("pending_symptom", None),
-            SlotSet("question_count", 0) # reset count for new input logic
-        ]
-        
-        return _process_triage_step(dispatcher, tracker, events)
 
 class ActionHandleInform(Action):
+    """A number in reply to one of the intake questions."""
+
     def name(self) -> Text:
         return "action_handle_inform"
-        
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        if check_emergency(tracker):
-            return handle_emergency()
 
-        triage_state = tracker.get_slot("triage_state")
-        text = tracker.latest_message.get("text", "")
-        numbers = re.findall(r'\d+', text)
-        val = int(numbers[0]) if numbers else None
-        
-        events = []
-        if triage_state == "asking_age":
-            if val is not None: events.append(SlotSet("user_age", val))
-            return _process_triage_step(dispatcher, tracker, events)
-        elif triage_state == "asking_duration":
-            if val is not None: events.append(SlotSet("duration_days", val))
-            return _process_triage_step(dispatcher, tracker, events)
-        elif triage_state == "asking_severity":
-            if val is not None: events.append(SlotSet("severity", val))
-            return _process_triage_step(dispatcher, tracker, events)
-            
-        return []
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
+        state = state_from_tracker(tracker)
+        escalation = guard_emergency(tracker, state)
+        if escalation is not None:
+            return escalation
 
-class ActionHandleAffirm(Action):
+        apply_metadata(tracker, state)
+        value = parse_number(latest_text(tracker))
+        attribute = {
+            triage.STAGE_AGE: "age",
+            triage.STAGE_DURATION: "duration_days",
+            triage.STAGE_SEVERITY: "severity",
+        }.get(state.stage)
+
+        if attribute is None:
+            # Not answering an intake question -- treat it as more symptoms.
+            outcome = triage.start(KB, latest_text(tracker), state)
+            return dispatch(dispatcher, outcome)
+
+        if value is None:
+            dispatcher.utter_message(
+                text="Sorry, I need a number for that. Could you try again?",
+                json_message={"type": "question", "input_type": "number"},
+            )
+            return []
+
+        problem = triage.validate_intake(attribute, value)
+        if problem is not None:
+            dispatcher.utter_message(
+                text=problem,
+                json_message={"type": "question", "question": problem,
+                              "question_text": problem, "input_type": "number"},
+            )
+            return []
+
+        setattr(state, attribute, value)
+        return dispatch(dispatcher, triage.advance(KB, state))
+
+
+class _AnswerHandler:
+    """Shared handling for yes / no / not-sure replies to a follow-up.
+
+    A plain mixin rather than an Action subclass: rasa_sdk registers every
+    subclass of Action it can find and calls name() on each, so an abstract
+    Action would abort action-server startup with "An action must implement a
+    name".
+    """
+
+    feedback_reply = "Thank you for your feedback! Take care."
+
+    def record(self, state: triage.TriageState, symptom: str) -> None:
+        raise NotImplementedError
+
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
+        state = state_from_tracker(tracker)
+        escalation = guard_emergency(tracker, state)
+        if escalation is not None:
+            return escalation
+
+        if state.stage == triage.STAGE_FEEDBACK:
+            dispatcher.utter_message(text=self.feedback_reply)
+            return [SlotSet("triage_state", None)]
+
+        if not state.pending:
+            # Nothing was asked, so there is nothing to answer. Ask the user
+            # to describe symptoms rather than silently wiping the session.
+            dispatcher.utter_message(
+                text="Could you tell me what symptoms you're experiencing?",
+                json_message={"type": "clarification", "input_type": "text"},
+            )
+            return [SlotSet("pending_symptom", None)]
+
+        self.record(state, state.pending)
+        state.pending = None
+
+        flag = triage.classify_red_flag(None, state)
+        if flag is not None:
+            return emergency_events(flag)
+        return dispatch(dispatcher, triage.advance(KB, state))
+
+
+class ActionHandleAffirm(_AnswerHandler, Action):
     def name(self) -> Text:
         return "action_handle_affirm"
 
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        if check_emergency(tracker):
-            return handle_emergency()
+    def record(self, state: triage.TriageState, symptom: str) -> None:
+        state.confirm(symptom)
 
-        triage_state = tracker.get_slot("triage_state")
-        if triage_state == "asking_feedback":
-            dispatcher.utter_message(text="Thank you for your feedback! Take care.")
-            return [SlotSet("triage_state", None)]
 
-        candidates = tracker.get_slot("candidate_diseases") or []
-        confirmed  = list(tracker.get_slot("confirmed_symptoms") or [])
-        asked      = list(tracker.get_slot("asked_symptoms") or [])
-        pending    = tracker.get_slot("pending_symptom")
+class ActionHandleDeny(_AnswerHandler, Action):
+    """A "no" is evidence too.
 
-        if not pending:
-            return [SlotSet("pending_symptom", None), SlotSet("candidate_diseases", []), SlotSet("confirmed_symptoms", [])]
+    It is recorded on the state and fed to the scorer as negative evidence.
+    Previously denials only pruned a candidate list that the final ranking
+    never consulted, so answering "no" changed nothing about the result.
+    """
 
-        if pending not in confirmed:
-            confirmed.append(pending)
+    feedback_reply = "Thank you for your feedback! We will use it to improve."
 
-        disease_map = load_dataset()
-        candidates = [d for d in candidates if pending in disease_map.get(d, [])]
-        candidates = _filter_dangerous(candidates, confirmed, disease_map)
-
-        events = [
-            SlotSet("candidate_diseases", candidates),
-            SlotSet("confirmed_symptoms", confirmed)
-        ]
-        return _process_triage_step(dispatcher, tracker, events)
-
-class ActionHandleDeny(Action):
     def name(self) -> Text:
         return "action_handle_deny"
 
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        if check_emergency(tracker):
-            return handle_emergency()
-
-        triage_state = tracker.get_slot("triage_state")
-        if triage_state == "asking_feedback":
-            dispatcher.utter_message(text="Thank you for your feedback! We will use it to improve.")
-            return [SlotSet("triage_state", None)]
-
-        candidates = tracker.get_slot("candidate_diseases") or []
-        confirmed  = list(tracker.get_slot("confirmed_symptoms") or [])
-        pending    = tracker.get_slot("pending_symptom")
-
-        if not pending:
-            return [SlotSet("pending_symptom", None), SlotSet("candidate_diseases", []), SlotSet("confirmed_symptoms", [])]
-
-        disease_map = load_dataset()
-        candidates = [d for d in candidates if pending not in disease_map.get(d, [])]
-
-        events = [
-            SlotSet("candidate_diseases", candidates),
-        ]
-        return _process_triage_step(dispatcher, tracker, events)
+    def record(self, state: triage.TriageState, symptom: str) -> None:
+        state.deny(symptom)
 
 
-class ActionHandleUnsure(Action):
-    """Handles 'I'm not sure' responses during triage.
-    
-    Marks the pending symptom as unknown — NOT confirmed and NOT denied.
-    Unknown symptoms are excluded from scoring entirely (they don't
-    count as present or absent).
-    """
+class ActionHandleUnsure(_AnswerHandler, Action):
+    """"Not sure" is missing data, not evidence -- excluded from scoring."""
+
     def name(self) -> Text:
         return "action_handle_unsure"
 
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        if check_emergency(tracker):
-            return handle_emergency()
+    def record(self, state: triage.TriageState, symptom: str) -> None:
+        state.mark_unknown(symptom)
 
-        triage_state = tracker.get_slot("triage_state")
-        if triage_state == "asking_feedback":
-            dispatcher.utter_message(text="Thank you for your feedback! Take care.")
-            return [SlotSet("triage_state", None)]
 
-        candidates = tracker.get_slot("candidate_diseases") or []
-        pending = tracker.get_slot("pending_symptom")
-        unknown = list(tracker.get_slot("unknown_symptoms") or [])
-
-        if not pending:
-            return [SlotSet("pending_symptom", None)]
-
-        # Mark as unknown — don't add to confirmed_symptoms, don't filter candidates
-        if pending not in unknown:
-            unknown.append(pending)
-
-        events = [
-            SlotSet("unknown_symptoms", unknown),
-            # Candidates stay unchanged — we don't narrow based on unsure
-        ]
-        return _process_triage_step(dispatcher, tracker, events)
+# ---------------------------------------------------------------------------
+# Information actions
+# ---------------------------------------------------------------------------
+def _requested_disease(tracker: Tracker) -> Optional[str]:
+    raw = tracker.get_slot("disease_entity") or tracker.get_slot("disease")
+    return normalize_disease(raw) if raw else None
 
 
 class ActionDiseaseDescription(Action):
-    def name(self) -> Text: return "action_disease_description"
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+    def name(self) -> Text:
+        return "action_disease_description"
+
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
         events = [SlotSet("pending_symptom", None)]
-        disease = tracker.get_slot("disease_entity") or tracker.get_slot("disease")
+        disease = _requested_disease(tracker)
         if not disease:
             dispatcher.utter_message(text="Please specify which disease you'd like to know about.")
             return events
-        try:
-            with open(_DESCRIPTION_PATH, encoding="utf-8") as f:
-                reader = csv.reader(f)
-                next(reader, None)
-                for row in reader:
-                    if row and disease.lower() == row[0].strip().lower():
-                        dispatcher.utter_message(text=f"**{disease.title()}**\n\n{row[1].strip()}" + DISCLAIMER)
-                        return events
-        except Exception: pass
-        dispatcher.utter_message(text=f"I don't have description data for *{disease}*.")
+
+        description = KB.description_of(disease)
+        if description:
+            dispatcher.utter_message(
+                text="**{}**\n\n{}{}".format(display(disease), description, triage.DISCLAIMER)
+            )
+        else:
+            dispatcher.utter_message(
+                text="I don't have description data for *{}*.".format(display(disease))
+            )
         return events
 
+
 class ActionDiseasePrecaution(Action):
-    def name(self) -> Text: return "action_disease_precaution"
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+    def name(self) -> Text:
+        return "action_disease_precaution"
+
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
         events = [SlotSet("pending_symptom", None)]
-        disease = tracker.get_slot("disease_entity") or tracker.get_slot("disease")
+        disease = _requested_disease(tracker)
         if not disease:
             dispatcher.utter_message(text="Please specify which disease you'd like precautions for.")
             return events
-        try:
-            with open(_PRECAUTION_PATH, encoding="utf-8") as f:
-                reader = csv.reader(f)
-                next(reader, None)
-                for row in reader:
-                    if row and disease.lower() == row[0].strip().lower():
-                        precautions = [v.strip() for v in row[1:] if v.strip()]
-                        bullets = "\n".join(f"* {p.capitalize()}" for p in precautions)
-                        dispatcher.utter_message(text=f"**Precautions for {disease.title()}:**\n\n{bullets}" + DISCLAIMER)
-                        return events
-        except Exception: pass
-        dispatcher.utter_message(text=f"I don't have precaution data for *{disease}*.")
+
+        if disease not in KB.precautions:
+            dispatcher.utter_message(
+                text="I don't have precaution data for *{}*.".format(display(disease))
+            )
+            return events
+
+        plan = care_plan.get_care_plan(disease)
+        body = "\n".join(care_plan.flatten(plan))
+        if plan.get("goal"):
+            body = "_{}_\n\n{}".format(plan["goal"], body)
+        dispatcher.utter_message(
+            text="**What you can do for {}:**\n\n{}{}".format(
+                display(disease), body, triage.DISCLAIMER
+            )
+        )
         return events
+
+
+_VACCINATION_SCHEDULES = {
+    "pregnancy": (
+        ("pregnancy", "pregnant", "tt", "mother", "expecting"),
+        "**Pregnancy Vaccination Schedule:**\n\n"
+        "* Tetanus Toxoid (TT) — 2 doses recommended\n"
+        "* Flu vaccine — safe during pregnancy\n"
+        "* Consult your OB-GYN for a personalised schedule",
+    ),
+    "newborn": (
+        ("newborn", "new born", "infant", "baby"),
+        "**0–6 Months Vaccination Schedule:**\n\n"
+        "* BCG — at birth\n"
+        "* OPV (Oral Polio Vaccine) — at birth, 6w, 10w, 14w\n"
+        "* Hepatitis B — at birth, 6w, 14w\n"
+        "* DPT — 6w, 10w, 14w",
+    ),
+}
+
+_VACCINATION_DEFAULT = (
+    "**Standard Vaccination Schedule:**\n\n"
+    "* 0–6 months: BCG, OPV, Hepatitis B, DPT\n"
+    "* 6–12 months: Measles, DPT booster\n"
+    "* Pregnancy: TT vaccine (2 doses)\n\n"
+    "Please share your age or category for a more specific schedule."
+)
+
+_VACCINATION_6_12 = (
+    "**6–12 Months Vaccination Schedule:**\n\n"
+    "* Measles — 9 months\n"
+    "* DPT Booster — 16–24 months\n"
+    "* Hepatitis A — 12 months"
+)
+
+_VACCINATION_DISCLAIMER = (
+    "\n\nPlease consult a pediatrician or healthcare provider to confirm the "
+    "appropriate vaccination schedule."
+)
+
 
 class ActionVaccinationSchedule(Action):
-    def name(self) -> Text: return "action_vaccination_schedule"
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        text = tracker.latest_message.get("text", "").lower()
-        events = [SlotSet("pending_symptom", None)]
-        if any(kw in text for kw in ["pregnancy", "pregnant", "tt", "mother"]):
-            msg = "**Pregnancy Vaccination Schedule:**\n\n* Tetanus Toxoid (TT) — 2 doses recommended\n* Flu vaccine — safe during pregnancy\n* Consult your OB-GYN for a personalised schedule"
-        elif any(kw in text for kw in ["newborn", "infant", "new born"]) or (any(kw in text for kw in ["0", "1", "2", "3", "4", "5", "6"]) and any(unit in text for unit in ["month", "months"])):
-            msg = "**0–6 Months Vaccination Schedule:**\n\n* BCG — at birth\n* OPV (Oral Polio Vaccine) — at birth, 6w, 10w, 14w\n* Hepatitis B — at birth, 6w, 14w\n* DPT — 6w, 10w, 14w"
-        elif any(kw in text for kw in ["7", "8", "9", "10", "11", "12"]) and "month" in text:
-            msg = "**6–12 Months Vaccination Schedule:**\n\n* Measles — 9 months\n* DPT Booster — 16–24 months\n* Hepatitis A — 12 months"
+    def name(self) -> Text:
+        return "action_vaccination_schedule"
+
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
+        text = latest_text(tracker).lower()
+        months = parse_number(text) if "month" in text else None
+
+        message = _VACCINATION_DEFAULT
+        for keywords, schedule in _VACCINATION_SCHEDULES.values():
+            if any(keyword in text for keyword in keywords):
+                message = schedule
+                break
         else:
-            msg = "**Standard Vaccination Schedule:**\n\n* 0–6 months: BCG, OPV, Hepatitis B, DPT\n* 6–12 months: Measles, DPT booster\n* Pregnancy: TT vaccine (2 doses)\n\nPlease share your age or category for a more specific schedule."
-        
-        disclaimer_vaccine = "\n\nPlease consult a pediatrician or healthcare provider to confirm the appropriate vaccination schedule."
-        dispatcher.utter_message(text=msg + disclaimer_vaccine + DISCLAIMER)
-        return events
+            if months is not None:
+                message = (
+                    _VACCINATION_SCHEDULES["newborn"][1] if months <= 6
+                    else _VACCINATION_6_12
+                )
+
+        dispatcher.utter_message(text=message + _VACCINATION_DISCLAIMER + triage.DISCLAIMER)
+        return [SlotSet("pending_symptom", None)]
+
 
 class ActionFindHospitals(Action):
-    """Stub for finding nearby hospitals (Phase E).
-    This action should only be triggered if the user's risk level is High
-    or if an emergency is detected.
+    """Ask the app to run its own nearby-hospital search.
+
+    The action server has no access to the user's location, so it cannot rank
+    facilities. It signals intent and the Flutter client performs the lookup
+    against the places API with the device's coordinates -- replacing a stub
+    that returned three invented hospitals with plausible-looking phone numbers.
     """
+
     def name(self) -> Text:
         return "action_find_hospitals"
 
-    def run(self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        # TODO: Implement actual Google Places API call
-        # Requires: User's latitude/longitude passed via slot or metadata
-        
+    def run(self, dispatcher, tracker, domain) -> List[Dict[Text, Any]]:
         dispatcher.utter_message(
-            text="Here are some nearby medical facilities.",
+            text="Let me find medical facilities near you.",
             json_message={
                 "type": "hospitals",
-                "hospitals": [
-                    {"name": "City General Hospital", "distance": "1.2 mi", "phone": "555-0199"},
-                    {"name": "Mercy Medical Center", "distance": "3.4 mi", "phone": "555-0188"},
-                    {"name": "Westside Urgent Care", "distance": "4.1 mi", "phone": "555-0177"}
-                ]
-            }
+                "action": "find_nearby",
+                "radius_m": 5000,
+            },
         )
         return []

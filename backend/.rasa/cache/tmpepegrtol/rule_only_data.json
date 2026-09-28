@@ -1,6 +1,0 @@
-{
-  "rule_only_slots": [
-    "emergency_detected"
-  ],
-  "rule_only_loops": []
-}

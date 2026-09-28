@@ -1,79 +1,120 @@
 import 'package:flutter/material.dart';
+
+import '../theme/app_theme.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
-import '../theme/app_theme.dart';
 
-enum TriageStage { symptoms, assessment, results }
+enum TriageStage {
+  symptoms('Symptoms'),
+  assessment('Interview'),
+  results('Result');
 
+  const TriageStage(this.label);
+  final String label;
+}
+
+/// Where the user is in the triage flow.
+///
+/// "Step 2 of 3 · Interview", over three short bars. Said in words first,
+/// because a person mid-triage wants to know how much is left, and a rail with
+/// glowing nodes makes them work that out from a picture.
+///
+/// The interview is many questions inside one step, so its own progress fills
+/// the current segment rather than getting a second bar underneath. Two
+/// progress bars stacked on one screen is a question the user should not have
+/// to answer ("which one is me?").
 class StageTracker extends StatelessWidget {
+  const StageTracker({
+    super.key,
+    required this.currentStage,
+    this.stageProgress = 1.0,
+    this.note,
+  });
+
   final TriageStage currentStage;
 
-  const StageTracker({super.key, required this.currentStage});
+  /// How far through the current stage, 0..1. Only the interview has any
+  /// inside it, so everything else leaves this at 1.
+  final double stageProgress;
+
+  /// A line under the bar naming that progress in words.
+  final String? note;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppTheme.spacing16),
-      child: Row(
-        children: [
-          _buildStageNode('Symptoms', TriageStage.symptoms),
-          _buildConnectingLine(TriageStage.assessment),
-          _buildStageNode('Assessment', TriageStage.assessment),
-          _buildConnectingLine(TriageStage.results),
-          _buildStageNode('Results', TriageStage.results),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildConnectingLine(TriageStage stageRequired) {
-    // A line is 'completed' if we have reached or passed the stage it points to.
-    final isCompleted = currentStage.index >= stageRequired.index;
-    return Expanded(
-      child: Container(
-        height: 2,
-        color: isCompleted ? AppColors.ink : AppColors.border,
-      ),
-    );
-  }
-
-  Widget _buildStageNode(String label, TriageStage stage) {
-    final isCompleted = currentStage.index > stage.index;
-    final isCurrent = currentStage == stage;
-
-    Color dotColor;
-    Color dotBorderColor;
-    TextStyle labelStyle;
-
-    if (isCompleted) {
-      dotColor = AppColors.ink;
-      dotBorderColor = AppColors.ink;
-      labelStyle = AppText.dataLabel.copyWith(color: AppColors.ink, fontSize: 12, fontWeight: FontWeight.w700);
-    } else if (isCurrent) {
-      dotColor = AppColors.ink;
-      dotBorderColor = AppColors.ink;
-      labelStyle = AppText.dataValue.copyWith(fontSize: 12, fontWeight: FontWeight.bold);
-    } else {
-      dotColor = Colors.transparent;
-      dotBorderColor = AppColors.border;
-      labelStyle = AppText.dataLabel.copyWith(color: AppColors.inkMuted, fontSize: 12);
-    }
+    const stages = TriageStage.values;
+    final index = currentStage.index;
 
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            color: dotColor,
-            shape: BoxShape.circle,
-            border: Border.all(color: dotBorderColor, width: 2),
+        Row(
+          children: [
+            Text(
+              'Step ${index + 1} of ${stages.length}',
+              style: AppText.bodySm,
+            ),
+            Text(' · ', style: AppText.bodySm),
+            Text(
+              currentStage.label,
+              style: AppText.bodySm.copyWith(
+                color: AppColors.text,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppTheme.space8),
+        Row(
+          children: [
+            for (var i = 0; i < stages.length; i++) ...[
+              if (i > 0) const SizedBox(width: 5),
+              Expanded(
+                child: _Segment(
+                  fill: i < index
+                      ? 1.0
+                      : i == index
+                      ? stageProgress.clamp(0.0, 1.0)
+                      : 0.0,
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (note != null) ...[
+          const SizedBox(height: AppTheme.space8),
+          Text(note!, style: AppText.bodySm),
+        ],
+      ],
+    );
+  }
+}
+
+class _Segment extends StatelessWidget {
+  const _Segment({required this.fill});
+
+  final double fill;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(2),
+      child: SizedBox(
+        height: 3,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            children: [
+              Container(color: AppColors.surfaceHigh),
+              AnimatedContainer(
+                duration: AppTheme.medium,
+                curve: Curves.easeOutCubic,
+                width: constraints.maxWidth * fill,
+                color: AppColors.signal,
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: AppTheme.spacing8),
-        Text(label.toUpperCase(), style: labelStyle),
-      ],
+      ),
     );
   }
 }

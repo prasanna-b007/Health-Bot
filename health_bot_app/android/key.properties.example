@@ -1,0 +1,14 @@
+# Copy to android/key.properties and fill in. key.properties is gitignored,
+# and so is the keystore itself.
+#
+# Generate a keystore (once, and keep it safe -- losing it means you can never
+# publish an update to the same Play Store listing):
+#
+#   keytool -genkey -v -keystore ~/healthbot-upload.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+storePassword=
+keyPassword=
+keyAlias=upload
+# Absolute path, or relative to the android/app directory.
+storeFile=/absolute/path/to/healthbot-upload.jks

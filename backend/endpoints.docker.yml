@@ -1,0 +1,5 @@
+# Endpoints used inside the container network, where the action server is
+# reachable by its compose service name rather than on localhost.
+# Local (non-Docker) runs keep using endpoints.yml.
+action_endpoint:
+  url: "http://actions:5055/webhook"
