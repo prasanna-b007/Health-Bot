@@ -4,9 +4,7 @@ import '../motion/motion_query.dart';
 import '../theme/app_theme.dart';
 import '../theme/colors.dart';
 import '../theme/text_styles.dart';
-import '../services/health_store.dart';
 import 'home_screen.dart';
-import 'profile_screen.dart';
 
 /// Cold-start screen.
 ///
@@ -35,16 +33,14 @@ class _SplashScreenState extends State<SplashScreen> {
   void _goHome() {
     if (!mounted) return;
     final reduceMotion = MotionQuery.reduceMotion(context);
-    final store = HealthStore.instance;
 
-    final isFirstRun = !store.profile.isConfigured;
-
+    // Always go to HomeScreen. Personal details are collected when the user
+    // starts a symptom check, not on app launch.
     Navigator.pushReplacement(
       context,
       PageRouteBuilder(
         transitionDuration: Duration(milliseconds: reduceMotion ? 160 : 320),
-        pageBuilder: (_, _, _) =>
-            isFirstRun ? const ProfileScreen(isFirstRun: true) : const HomeScreen(),
+        pageBuilder: (_, _, _) => const HomeScreen(),
         // A plain cross-fade. Home is the same page with content on it, not a
         // new place, so nothing needs to slide.
         transitionsBuilder: (context, animation, _, child) => FadeTransition(
