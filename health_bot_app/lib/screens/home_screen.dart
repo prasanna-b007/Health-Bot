@@ -85,7 +85,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 const SizedBox(height: AppTheme.space24),
 
                 _PrimaryAction(
-                  onTap: () => _open(const AssessmentFormScreen()),
+                  onTap: () {
+                    if (!_store.onboarded) {
+                      _open(const ProfileScreen(isFirstRun: true));
+                    } else {
+                      _open(const AssessmentFormScreen());
+                    }
+                  },
                 ),
                 const SizedBox(height: AppTheme.space12),
 
